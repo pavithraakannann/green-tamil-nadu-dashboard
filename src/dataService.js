@@ -1,8 +1,8 @@
 import Papa from "papaparse";
 
 const DATA_FILES = {
-  merge: "/data/merge.csv",
-  palm: "/data/palm.csv",
+  merge: `${import.meta.env.BASE_URL}data/merge.csv`,
+  palm: `${import.meta.env.BASE_URL}data/palm.csv`,
 };
 
 function fetchCsv(source, onProgress) {

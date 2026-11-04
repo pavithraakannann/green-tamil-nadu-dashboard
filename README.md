@@ -11,6 +11,12 @@ A React and Vite dashboard that reads the local `merge.csv` and `palm.csv` files
 
 To create a production build, run `npm.cmd run build`; to serve that build locally, run `npm.cmd run preview`.
 
+## GitHub Pages
+
+The GitHub Actions workflow builds the app with Vite and retries the Pages deployment if GitHub returns a transient deployment error. In the repository settings, set **Pages → Build and deployment → Source** to **GitHub Actions**. The build uses the repository subpath `/green-tamil-nadu-dashboard/`.
+
+The source CSV files are intentionally excluded from Git. A public deployment will show the data-loading error until privacy-safe CSV files are supplied to the Pages build. Do not commit the original files.
+
 ## Data notes
 
 - Both files are parsed by PapaParse in a web worker. CSV values and original columns are retained for tables and exports.
