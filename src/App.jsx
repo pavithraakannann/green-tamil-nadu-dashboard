@@ -50,6 +50,13 @@ const FILTER_LABELS = {
   Species: "species",
   Scheme: "schemes",
 };
+const DEFAULT_FILTERS = {
+  District: "all",
+  Division: "all",
+  Year: "all",
+  Species: "all",
+  Scheme: "all",
+};
 const COLORS = ["#248451", "#69a879", "#d99545", "#5784a5", "#9d75b6", "#d16d52"];
 const ROWS_PER_PAGE = 25;
 
@@ -579,7 +586,7 @@ function Reports({ datasets, rows, summary, options, filters, setFilters, onClea
 export default function App() {
   const [datasets, setDatasets] = useState([]);
   const [activePage, setActivePage] = useState("overview");
-  const [filters, setFilters] = useState({ District: "all", Division: "all", Species: "all", Scheme: "all" });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [progress, setProgress] = useState({ merge: 0, palm: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -631,7 +638,7 @@ export default function App() {
   );
 
   function clearFilters() {
-    setFilters({ District: "all", Division: "all", Year: "all", Species: "all", Scheme: "all" });
+    setFilters({ ...DEFAULT_FILTERS });
   }
 
   if (loading || error) return <LoadingScreen progress={progress} error={error} onRetry={loadData} />;
