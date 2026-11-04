@@ -15,7 +15,7 @@ To create a production build, run `npm.cmd run build`; to serve that build local
 
 The GitHub Actions workflow builds the app with Vite and retries the Pages deployment if GitHub returns a transient deployment error. In the repository settings, set **Pages → Build and deployment → Source** to **GitHub Actions**. The build uses the repository subpath `/green-tamil-nadu-dashboard/`.
 
-The source CSV files are intentionally excluded from Git. A public deployment will show the data-loading error until privacy-safe CSV files are supplied to the Pages build. Do not commit the original files.
+The source CSV files are intentionally excluded from Git. The public compressed CSV copies are generated with `python scripts/sanitize-data.py` and omit personal identifiers, contact details, addresses, fine-grained locations, coordinates, and exact timestamps. Review the sanitization before publishing updated data. Never commit the original CSV files.
 
 ## Data notes
 

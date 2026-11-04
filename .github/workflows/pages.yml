@@ -25,6 +25,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Verify sanitized public CSVs
+        run: python scripts/sanitize-data.py --check
       - name: Build Vite site
         run: npm run build
       - name: Upload Pages artifact

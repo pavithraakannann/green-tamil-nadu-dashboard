@@ -191,7 +191,7 @@ function LoadingScreen({ progress, error, onRetry }) {
           <button className="button button-primary" onClick={onRetry}>
             <RefreshCw size={16} /> Try again
           </button>
-          <small>Expected files: public/data/merge.csv and public/data/palm.csv</small>
+          <small>Expected sanitized files: public/data/merge.csv.gz and public/data/palm.csv.gz</small>
         </div>
       ) : (
         <div className="loading-card">
@@ -631,7 +631,7 @@ export default function App() {
   );
 
   function clearFilters() {
-    setFilters({ District: "all", Division: "all", Species: "all", Scheme: "all" });
+    setFilters({ District: "all", Division: "all", Year: "all", Species: "all", Scheme: "all" });
   }
 
   if (loading || error) return <LoadingScreen progress={progress} error={error} onRetry={loadData} />;

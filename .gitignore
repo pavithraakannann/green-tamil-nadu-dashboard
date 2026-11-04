@@ -1,3 +1,6 @@
 node_modules/
 dist/
 public/data/*.csv
+public/data/*.csv.gz
+!public/data/merge.csv.gz
+!public/data/palm.csv.gz
