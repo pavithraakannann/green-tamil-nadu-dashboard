@@ -44,6 +44,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy-pages.outputs.page_url || steps.deploy-pages-retry.outputs.page_url || steps.deploy-pages-final.outputs.page_url }}
     steps:
+      - name: Configure Pages to use GitHub Actions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request PUT \
+            --url "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data '{"build_type":"workflow"}'
       - name: Deploy to GitHub Pages (attempt 1)
         id: deploy-pages
         continue-on-error: true

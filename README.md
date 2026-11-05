@@ -15,7 +15,7 @@ To create a production build, run `npm.cmd run build`; to serve that build local
 
 Live dashboard: https://pavithraakannann.github.io/green-tamil-nadu-dashboard/
 
-The GitHub Actions workflow builds the app with Vite and retries the Pages deployment if GitHub returns a transient deployment error. In the repository settings, set **Pages → Build and deployment → Source** to **GitHub Actions**. The build uses the repository subpath `/green-tamil-nadu-dashboard/`.
+The GitHub Actions workflow builds the app with Vite, configures GitHub Pages to use **GitHub Actions**, and retries the Pages deployment if GitHub returns a transient deployment error. The build uses the repository subpath `/green-tamil-nadu-dashboard/`.
 
 The source CSV files are intentionally excluded from Git. The public compressed CSV copies are generated with `python scripts/sanitize-data.py` and omit personal identifiers, contact details, addresses, fine-grained locations, coordinates, and exact timestamps. Review the sanitization before publishing updated data. Never commit the original CSV files.
 
