@@ -95,6 +95,11 @@ function countAt(dataset, row) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function recordCountAt(dataset, row) {
+  const value = Number(valueAt(dataset, row, "Record Count"));
+  return Number.isSafeInteger(value) && value > 0 ? value : 1;
+}
+
 function areaAt(dataset, row) {
   const area = valueAt(dataset, row, "Land parcel area") || valueAt(dataset, row, "Total Area");
   const value = Number(area.replace(/,/g, ""));
@@ -260,7 +265,7 @@ function summarize(datasetRows) {
   const schemes = new Set();
 
   for (const { dataset, row } of datasetRows) {
-    records += 1;
+    records += recordCountAt(dataset, row);
     seedlings += countAt(dataset, row);
     area += areaAt(dataset, row);
     for (const [set, field] of [
@@ -293,7 +298,7 @@ function groupData(datasetRows, field, metric) {
     const label = filterValue(dataset, row, field);
     if (!label) continue;
     const group = groups.get(label) ?? { name: label, records: 0, seedlings: 0 };
-    group.records += 1;
+    group.records += recordCountAt(dataset, row);
     group.seedlings += countAt(dataset, row);
     groups.set(label, group);
   }
@@ -315,14 +320,14 @@ function LoadingScreen({ progress, error, onRetry }) {
           <button className="button button-primary" onClick={onRetry}>
             <RefreshCw size={16} /> Try again
           </button>
-          <small>Expected sanitized files: public/data/merge.csv.gz and public/data/palm.csv.gz</small>
+          <small>Check that the dashboard API is deployed and its private GitHub credentials are configured.</small>
         </div>
       ) : (
         <div className="loading-card">
           <LoaderCircle className="spin loading-spinner" size={30} />
           <h1>Preparing your dashboard</h1>
-          <p>Reading the local planting records. Large files may take a moment.</p>
-          {totalRows > 0 && <span className="loading-count">{formatNumber(totalRows)} rows parsed</span>}
+          <p>Loading aggregated planting data from the dashboard API.</p>
+          {totalRows > 0 && <span className="loading-count">{formatNumber(totalRows)} aggregate groups loaded</span>}
         </div>
       )}
     </main>
@@ -440,7 +445,7 @@ function DivisionDetails({ division, rows, onBack }) {
       const scheme = valueAt(dataset, row, "Scheme") || "Not specified";
       const key = `${species}\u0000${scheme}`;
       const group = grouped.get(key) ?? { species, scheme, records: 0, seedlings: 0 };
-      group.records += 1;
+      group.records += recordCountAt(dataset, row);
       group.seedlings += countAt(dataset, row);
       grouped.set(key, group);
     }
@@ -461,7 +466,7 @@ function DivisionDetails({ division, rows, onBack }) {
         action={<button className="button button-outline" onClick={onBack}><ArrowLeft size={16} /> Back to overview</button>}
       />
       <div className="dataset-summary division-summary">
-        <div><span>Planting records</span><strong>{formatNumber(rows.length)}</strong></div>
+        <div><span>Planting records</span><strong>{formatNumber(rows.reduce((total, item) => total + recordCountAt(item.dataset, item.row), 0))}</strong></div>
         <div><span>Species</span><strong>{formatNumber(speciesCount)}</strong></div>
         <div><span>Schemes</span><strong>{formatNumber(schemeCount)}</strong></div>
         <div><span>Seedlings reported</span><strong>{formatNumber(totalSeedlings)}</strong></div>
@@ -487,7 +492,7 @@ function DivisionDetails({ division, rows, onBack }) {
                 <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No planting records found</strong><span>Change the dashboard filters and try again.</span></td></tr>
               )}
               {groups.length > 0 && (
-                <tr className="totals-row"><td colSpan={2}>Total</td><td>{formatNumber(totalSeedlings)}</td><td>{formatNumber(rows.length)}</td></tr>
+                <tr className="totals-row"><td colSpan={2}>Total</td><td>{formatNumber(totalSeedlings)}</td><td>{formatNumber(rows.reduce((total, item) => total + recordCountAt(item.dataset, item.row), 0))}</td></tr>
               )}
             </tbody>
           </table>
@@ -967,7 +972,9 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
   const schemes = groupData(chartRows, "Scheme", "records").slice(0, 6);
   const sources = datasets.map((dataset) => ({
     name: dataset.source === "merge" ? "Merge data" : "Palm data",
-    value: dataset.rows.filter((row) => matchesFilters(dataset, row, filters)).length,
+    value: dataset.rows
+      .filter((row) => matchesFilters(dataset, row, filters))
+      .reduce((total, row) => total + recordCountAt(dataset, row), 0),
   })).filter((item) => item.value > 0);
 
   return (
@@ -976,7 +983,7 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
         eyebrow="Green Tamil Nadu Mission"
         title="Planting overview"
         description="A clear view of planting activity across Tamil Nadu."
-        action={<span className="live-badge"><span /> Local CSV data</span>}
+        action={<span className="live-badge"><span /> Aggregated dashboard data</span>}
       />
       <FilterBar options={options} filters={filters} setFilters={setFilters} onClear={onClear} />
       <div className="stat-grid">
@@ -1079,8 +1086,8 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
         </ChartCard>
       </div>
       <section className="source-strip">
-        <div><span className="source-dot" /><strong>Sources</strong><span>Statistics are calculated from original local CSV records.</span></div>
-        <div className="source-files">{datasets.map((dataset) => <span key={dataset.source}>{dataset.fileName} <b>{formatNumber(dataset.rows.length)}</b></span>)}</div>
+        <div><span className="source-dot" /><strong>Sources</strong><span>Statistics use aggregated groups; source records and private columns are not sent to the browser.</span></div>
+        <div className="source-files">{datasets.map((dataset) => <span key={dataset.source}>{dataset.fileName} <b>{formatNumber(dataset.rows.length)}</b> groups</span>)}</div>
         <small>Target and achievement fields are not present in the supplied files.</small>
       </section>
     </>
@@ -1090,7 +1097,7 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
 function getDefaultColumns(dataset) {
   const preferred = [
     "Date", "District", "Circle", "Division", "Species",
-    "Seedlings", "Year", "Scheme", "Report ID",
+    "Seedlings", "Record Count", "Year", "Scheme",
   ];
   return preferred.filter((field) => datasetColumns(dataset).includes(field));
 }
@@ -1185,7 +1192,7 @@ function DataTable({ dataset, rows }) {
         </table>
       </div>
       <div className="table-footer">
-        <span>{filtered.length ? `${formatNumber(page * pageSize + 1)}–${formatNumber(Math.min((page + 1) * pageSize, filtered.length))}` : "0"} of {formatNumber(filtered.length)} records</span>
+        <span>{filtered.length ? `${formatNumber(page * pageSize + 1)}–${formatNumber(Math.min((page + 1) * pageSize, filtered.length))}` : "0"} of {formatNumber(filtered.length)} aggregated groups ({formatNumber(filtered.reduce((total, row) => total + recordCountAt(dataset, row), 0))} records)</span>
         <div className="pagination">
           <label>Rows
             <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
@@ -1282,22 +1289,33 @@ export default function App() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [progress, setProgress] = useState({ merge: 0, palm: 0 });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState("");
+  const [syncWarning, setSyncWarning] = useState("");
   const [error, setError] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(forceRefresh = false) {
+    const hasData = datasets.length > 0;
+    setLoading(!hasData);
+    setRefreshing(hasData);
     setError("");
+    setSyncWarning("");
     setProgress({ merge: 0, palm: 0 });
     try {
       const loaded = await refreshDashboardData(({ source, rows }) => {
         setProgress((current) => ({ ...current, [source]: rows }));
-      });
-      setDatasets(loaded);
+      }, { forceRefresh });
+      setDatasets(loaded.datasets);
+      setLastSyncedAt(loaded.lastSyncedAt ?? "");
+      setSyncWarning(loaded.warning);
     } catch (loadError) {
-      setError(loadError.message || "An unexpected error occurred while loading the CSV files.");
+      const message = loadError.message || "An unexpected error occurred while loading dashboard data.";
+      if (hasData) setSyncWarning(message);
+      else setError(message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -1359,7 +1377,7 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  if (loading || error) return <LoadingScreen progress={progress} error={error} onRetry={loadData} />;
+  if (loading || error) return <LoadingScreen progress={progress} error={error} onRetry={() => loadData()} />;
 
   const merge = datasetSummaries.find((dataset) => dataset.source === "merge");
   const palm = datasetSummaries.find((dataset) => dataset.source === "palm");
@@ -1383,7 +1401,7 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="mission-card"><div className="mission-icon"><Sprout size={17} /></div><strong>Growing a greener future</strong><span>Planting data for a thriving Tamil Nadu.</span></div>
-          <div className="sidebar-foot"><span className="sidebar-status" /> LOCAL DATA MODE <span>v1.0</span></div>
+          <div className="sidebar-foot"><span className="sidebar-status" /> PRIVATE DATA API <span>v1.0</span></div>
         </div>
       </aside>
 
@@ -1394,13 +1412,15 @@ export default function App() {
             <div className="breadcrumb"><span>Green Tamil Nadu</span><span className="crumb-slash">/</span><strong>{activePage === "division-details" ? selectedDivision : activePage === "other-department-details" ? "Other departments" : activePage === "forest-department-details" ? "Forest Department" : activePage === "palm-details" ? "Palm seedlings" : NAV_ITEMS.find((item) => item.id === activePage)?.label}</strong></div>
           </div>
           <div className="topbar-right">
-            <span className="topbar-source"><span /> Local CSV data</span>
-            <button className="button button-outline refresh-button" onClick={loadData}><RefreshCw size={15} /> Refresh data</button>
+            <span className="topbar-source"><span /> Private GitHub data</span>
+            {lastSyncedAt && <span className="sync-time">Synced {new Date(lastSyncedAt).toLocaleString()}</span>}
+            <button className="button button-outline refresh-button" disabled={refreshing} onClick={() => loadData(true)}><RefreshCw className={refreshing ? "spin" : ""} size={15} /> {refreshing ? "Refreshing…" : "Refresh data"}</button>
             <div className="avatar">GT</div>
           </div>
         </header>
 
         <div className="page-content">
+          {syncWarning && <div className="sync-notice" role="status">{syncWarning}</div>}
           {activePage === "overview" && (
             <Overview
               summary={summary}
@@ -1455,10 +1475,10 @@ export default function App() {
             />
           )}
           {activePage === "merge" && merge && (
-            <DatasetPage dataset={merge} rows={merge.filteredRows} title="Merge data" description="Browse planting records from merge.csv. Search across all fields and export filtered records." summary={merge.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
+            <DatasetPage dataset={merge} rows={merge.filteredRows} title="Merge data" description="Browse privacy-safe aggregated groups from merge.csv. Search, filter and export the public summary data." summary={merge.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
           )}
           {activePage === "palm" && palm && (
-            <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse palm planting records from palm.csv with the same district, division, species and scheme filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
+            <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse privacy-safe aggregated groups from palm.csv with the same district, division, species and scheme filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
           )}
           {activePage === "reports" && (
             <Reports
@@ -1473,7 +1493,7 @@ export default function App() {
           )}
           <footer className="page-footer">
             <span>Green Tamil Nadu Mission <span className="footer-separator">·</span> Forest Department</span>
-            <span>Source files: merge.csv &amp; palm.csv <span className="footer-separator">·</span> Local data only</span>
+            <span>Source files: merge.csv &amp; palm.csv <span className="footer-separator">·</span> Aggregated data only</span>
           </footer>
         </div>
       </main>

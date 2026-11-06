@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: green-tamil-nadu-dashboard-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: GITHUB_OWNER
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://pavithraakannann.github.io
+      - key: CACHE_TTL_SECONDS
+        value: "900"

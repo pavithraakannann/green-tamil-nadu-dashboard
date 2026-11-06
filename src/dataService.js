@@ -1,107 +1,53 @@
-import Papa from "papaparse";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
 
-const DATA_FILES = {
-  merge: `${import.meta.env.BASE_URL}data/merge.csv.gz`,
-  palm: `${import.meta.env.BASE_URL}data/palm.csv.gz`,
-};
+async function fetchDashboardPayload(forceRefresh) {
+  const endpoint = forceRefresh ? "/api/refresh" : "/api/dashboard-data";
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: forceRefresh ? "POST" : "GET",
+      headers: { Accept: "application/json" },
+    });
+  } catch (error) {
+    throw new Error(`Unable to connect to the dashboard API: ${error.message}`);
+  }
 
-function fetchCsv(source, onProgress) {
-  return new Promise((resolve, reject) => {
-    const rows = [];
-    let headers;
-    let parseError;
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`The dashboard API returned an invalid response (HTTP ${response.status}).`);
+  }
+  if (!response.ok) {
+    throw new Error(payload.error || `The dashboard API returned HTTP ${response.status}.`);
+  }
+  if (!Array.isArray(payload.datasets) || payload.datasets.length !== 2) {
+    throw new Error("The dashboard API did not return both aggregated datasets.");
+  }
 
-    fetch(new URL(DATA_FILES[source], window.location.href))
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(
-            `Unable to load public ${source} data: HTTP ${response.status}.`,
-          );
-        }
-        const contentIsAlreadyDecompressed = response.headers
-          .get("content-encoding")
-          ?.toLowerCase()
-          .includes("gzip");
-        if (!contentIsAlreadyDecompressed && typeof DecompressionStream === "undefined") {
-          throw new Error(
-            "This browser does not support compressed public data. Please use a current version of Chrome, Edge, or Firefox.",
-          );
-        }
-        const body = contentIsAlreadyDecompressed
-          ? response.body
-          : response.body.pipeThrough(new DecompressionStream("gzip"));
-        return new Response(body).blob();
-      })
-      .then((csvBlob) => {
-        Papa.parse(csvBlob, {
-          worker: true,
-          header: false,
-          skipEmptyLines: "greedy",
-          chunkSize: 1024 * 1024,
-          chunk(result) {
-            if (!headers && result.data.length) {
-              headers = result.data[0].map((cell, index) =>
-                index === 0 ? cell.replace(/^\uFEFF/, "").trim() : cell.trim(),
-              );
-              rows.push(...result.data.slice(1));
-            } else {
-              rows.push(...result.data);
-            }
-
-            if (result.errors.length && !parseError) {
-              parseError = result.errors[0];
-            }
-            onProgress?.({ source, rows: rows.length });
-          },
-          complete() {
-            if (parseError) {
-              reject(
-                new Error(
-                  `Could not parse public ${source} data: ${parseError.message} (row ${parseError.row + 1}).`,
-                ),
-              );
-              return;
-            }
-            if (!headers) {
-              reject(new Error(`Public ${source} data is empty or has no header row.`));
-              return;
-            }
-
-            for (let index = 0; index < rows.length; index += 1) {
-              if (rows[index].length < headers.length) {
-                rows[index] = rows[index].concat(Array(headers.length - rows[index].length).fill(""));
-              }
-            }
-
-            resolve({
-              source,
-              fileName: `${source}.csv.gz`,
-              headers,
-              rows,
-            });
-          },
-          error(error) {
-            reject(new Error(`Unable to parse public ${source} data: ${error.message}`));
-          },
-        });
-      })
-      .catch((error) =>
-        reject(new Error(error.message || `Unable to load public ${source} data.`)),
-      );
+  const datasets = payload.datasets.map((dataset) => {
+    if (
+      !["merge", "palm"].includes(dataset.source)
+      || !Array.isArray(dataset.headers)
+      || !Array.isArray(dataset.rows)
+      || dataset.rows.some((row) => !Array.isArray(row) || row.length !== dataset.headers.length)
+    ) {
+      throw new Error("The dashboard API returned an invalid aggregated dataset.");
+    }
+    return dataset;
   });
+
+  return {
+    datasets,
+    lastSyncedAt: payload.lastSyncedAt,
+    warning: typeof payload.warning === "string" ? payload.warning : "",
+  };
 }
 
-export function fetchMergeData(onProgress) {
-  return fetchCsv("merge", onProgress);
-}
-
-export function fetchPalmData(onProgress) {
-  return fetchCsv("palm", onProgress);
-}
-
-export function refreshDashboardData(onProgress) {
-  return Promise.all([
-    fetchMergeData(onProgress),
-    fetchPalmData(onProgress),
-  ]);
+export async function refreshDashboardData(onProgress, { forceRefresh = false } = {}) {
+  const payload = await fetchDashboardPayload(forceRefresh);
+  for (const dataset of payload.datasets) {
+    onProgress?.({ source: dataset.source, rows: dataset.rows.length });
+  }
+  return payload;
 }

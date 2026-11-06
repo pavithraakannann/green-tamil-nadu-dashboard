@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "backend:dev": "npm --prefix backend run dev",
+    "backend:test": "npm --prefix backend test"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
