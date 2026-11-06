@@ -1,6 +1,8 @@
 import csv
+import datetime
 import gzip
 import os
+import re
 import sys
 
 
@@ -10,7 +12,6 @@ PRIVATE_COLUMNS = {
     "address",
     "block",
     "contact name",
-    "date",
     "farmer name",
     "id",
     "incharge name",
@@ -35,6 +36,19 @@ PRIVATE_COLUMNS = {
     "user name",
     "village",
 }
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def sanitize_date(value):
+    match = DATE_PATTERN.match((value or "").strip())
+    if not match:
+        return ""
+    date_value = match.group()
+    try:
+        datetime.date.fromisoformat(date_value)
+    except ValueError:
+        return ""
+    return date_value
 
 
 def sanitize(source):
@@ -68,7 +82,11 @@ def sanitize(source):
             for row in reader:
                 if not row or all(not (value or "").strip() for value in row.values()):
                     continue
-                writer.writerow(row)
+                public_row = {column: row.get(column, "") for column in columns}
+                for column in columns:
+                    if column.strip().casefold() == "date":
+                        public_row[column] = sanitize_date(public_row[column])
+                writer.writerow(public_row)
                 row_count += 1
 
     return output_path, row_count, columns
@@ -90,9 +108,17 @@ def validate_public(source):
             raise ValueError(
                 f"{path} contains private columns: {', '.join(unsafe_columns)}"
             )
+        date_columns = [
+            column for column in reader.fieldnames
+            if column.strip().casefold() == "date"
+        ]
         for row in reader:
             if row is None:
                 raise ValueError(f"{path} contains a malformed record")
+            for column in date_columns:
+                date_value = (row.get(column) or "").strip()
+                if date_value and sanitize_date(date_value) != date_value:
+                    raise ValueError(f"{path} contains a non-calendar Date value")
             row_count += 1
 
     return path, row_count
