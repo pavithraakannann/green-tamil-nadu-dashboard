@@ -10,6 +10,7 @@ export function createDashboardService({
   repo,
   token,
   cacheFile,
+  cacheStore,
   cacheTtlMs,
   refreshCooldownMs = 60_000,
   fetchImpl = fetch,
@@ -20,9 +21,15 @@ export function createDashboardService({
   let lastRefreshAttemptAt = null;
 
   async function loadCache() {
-    if (!cacheFile) return;
     try {
-      const saved = JSON.parse(await readFile(cacheFile, "utf8"));
+      let saved;
+      if (cacheStore) {
+        saved = await cacheStore.read();
+      } else if (cacheFile) {
+        saved = JSON.parse(await readFile(cacheFile, "utf8"));
+      } else {
+        return;
+      }
       if (saved?.datasets?.length === 2 && saved.lastSyncedAt) cache = saved;
     } catch (error) {
       if (error.code !== "ENOENT") {
@@ -32,6 +39,10 @@ export function createDashboardService({
   }
 
   async function persistCache(nextCache) {
+    if (cacheStore) {
+      await cacheStore.write(nextCache);
+      return;
+    }
     if (!cacheFile) return;
     await mkdir(dirname(cacheFile), { recursive: true });
     const temporaryFile = `${cacheFile}.tmp`;

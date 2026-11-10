@@ -20,16 +20,26 @@ Review the allowlist and confirm the source repository owner authorizes these gr
 
 ## Deployment
 
-### Backend (Render)
+### Backend API (Vercel)
 
-1. Create a Render Web Service from this repository using `render.yaml` (or configure the service with `backend` as its root directory).
-2. Set `GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_TOKEN` in Render's environment settings. Use a fine-grained, read-only token scoped only to the source repository and required contents/releases access. Never put the token in a frontend variable.
-3. Set `CORS_ORIGINS` to `https://pavithraakannann.github.io` and deploy. Verify `https://<your-service>.onrender.com/api/health`.
-4. The backend caches the last successful pair of aggregates in process and synchronizes them together. Requests within `CACHE_TTL_SECONDS` use the cache (5 minutes by default); a failed refresh keeps serving the last successful cache with a warning. Manual refreshes are throttled to one GitHub synchronization per minute to limit API abuse. GitHub API requests bypass HTTP caches so replacement assets in an existing release are detected.
+The frontend remains on GitHub Pages. Deploy the backend as a separate Vercel project:
+
+1. Import this repository into Vercel. Set **Root Directory** to `backend` so Vercel deploys only the API and its Node.js dependencies. The Vercel function configuration allows up to 300 seconds for release downloads and parsing.
+2. In the Vercel project, create a **private Vercel Blob** store and connect it to this project. Enable the Vercel-managed OIDC environment variables for the connection; the Blob SDK uses these to read and write the private cache. The cached data contains dashboard aggregates, not raw CSV rows.
+3. Add these Vercel project environment variables:
+   - `GITHUB_OWNER=greentamilnadumission`
+   - `GITHUB_REPO=gtm-data`
+   - `GITHUB_TOKEN=<read-only PAT for the private source repository>`
+   - `CORS_ORIGINS=https://pavithraakannann.github.io`
+   - `CACHE_TTL_SECONDS=300`
+
+   Keep the PAT only in Vercel's backend environment variables. Never add it to GitHub Actions variables, frontend configuration, or committed files.
+4. Deploy and verify `https://<your-vercel-project>.vercel.app/api/health`. Confirm it reports `configured: true`.
+5. The backend stores the last successful pair of aggregates in private Blob storage so the cache survives Vercel function cold starts. It synchronizes both assets together, keeps serving the prior cache after a failed refresh, and throttles manual refreshes to one GitHub synchronization per minute. GitHub API requests bypass HTTP caches so replacement assets in an existing release are detected.
 
 ### Frontend (GitHub Pages)
 
-1. Set the repository Actions variable `VITE_API_BASE_URL` to the deployed backend origin, for example `https://<your-service>.onrender.com` (no trailing slash).
+1. Set the repository Actions variable `VITE_API_BASE_URL` to the deployed Vercel backend origin, for example `https://<your-vercel-project>.vercel.app` (no trailing slash).
 2. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**.
 3. Run the Pages workflow. It requires the API URL variable and fails instead of deploying a site configured to call the wrong origin.
 

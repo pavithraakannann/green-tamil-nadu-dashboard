@@ -5,8 +5,10 @@ import { createApp } from "../src/app.js";
 import { createDashboardService } from "../src/dashboardService.js";
 import { aggregateCsv, aggregateCsvStream } from "../src/csvService.js";
 import { fetchLatestRelease, fetchReleaseAssetStream } from "../src/githubService.js";
+import { createVercelHandler } from "../src/vercelHandler.js";
 import { Readable } from "node:stream";
 import { gunzipSync, gzipSync } from "node:zlib";
+import { createServer, get } from "node:http";
 
 test("aggregates only whitelisted dashboard dimensions and removes private columns", () => {
   const csv = [
@@ -137,6 +139,54 @@ test("refresh caches both aggregate datasets together and retains the old cache 
   assert.equal((await service.forceRefresh()).warning, "");
 });
 
+test("persists the successful cache for reuse by a cold serverless instance", async () => {
+  let savedCache = null;
+  let requestCount = 0;
+  const cacheStore = {
+    read: async () => savedCache,
+    write: async (value) => { savedCache = value; },
+  };
+  const fetchImpl = async (url) => {
+    requestCount += 1;
+    if (String(url).endsWith("/releases/latest")) {
+      return Response.json({
+        assets: [{ name: "merged.csv.gz", id: 1 }, { name: "palm_trees.csv", id: 2 }],
+      });
+    }
+    const csv = `District,Seedlings\n${String(url).endsWith("/1") ? "Chennai" : "Madurai"},12\n`;
+    return String(url).endsWith("/1")
+      ? new Response(gzipSync(csv))
+      : new Response(csv);
+  };
+  const options = {
+    owner: "owner",
+    repo: "private-data",
+    token: "test-token",
+    cacheStore,
+    cacheTtlMs: 300_000,
+    fetchImpl,
+    now: () => new Date("2026-11-10T00:00:00.000Z"),
+  };
+
+  const firstInstance = createDashboardService(options);
+  await firstInstance.loadCache();
+  const refreshed = await firstInstance.forceRefresh();
+  assert.equal(savedCache.lastSyncedAt, refreshed.lastSyncedAt);
+  assert.equal(requestCount, 3);
+
+  const coldInstance = createDashboardService({
+    ...options,
+    fetchImpl: async () => {
+      throw new Error("A fresh serverless instance should use persistent cache.");
+    },
+  });
+  await coldInstance.loadCache();
+  const restored = await coldInstance.getDashboardData();
+  assert.equal(restored.lastSyncedAt, refreshed.lastSyncedAt);
+  assert.equal(restored.datasets.length, 2);
+  assert.equal(requestCount, 3);
+});
+
 test("missing required release assets fail without returning source data", async () => {
   const fetchImpl = async () => Response.json({
     assets: [{ name: "merged.csv.gz", id: 1 }],
@@ -198,6 +248,86 @@ test("API exposes only aggregate payloads and permits only configured browser or
     headers: { Origin: "https://untrusted.example" },
   });
   assert.equal(deniedResponse.headers.get("access-control-allow-origin"), null);
+});
+
+test("compresses large API responses to fit serverless response limits", async (t) => {
+  const rows = Array.from({ length: 10_000 }, (_, index) => [
+    `Tamil Nadu District ${index % 38}`,
+    "2026-2027",
+    "Forest Department",
+    String(index),
+    "1",
+  ]);
+  const dashboardService = {
+    getStatus: () => ({ status: "ok", configured: true, hasCachedData: true, lastSyncedAt: null }),
+    getDashboardData: async () => ({
+      datasets: [{
+        source: "merge",
+        headers: ["District", "Year", "Department", "Seedlings", "Record Count"],
+        rows,
+      }, {
+        source: "palm",
+        headers: ["District", "Year", "Department", "Seedlings", "Record Count"],
+        rows: [],
+      }],
+      lastSyncedAt: "2026-11-10T00:00:00.000Z",
+      warning: "",
+    }),
+    forceRefresh: async () => ({ datasets: [], warning: "" }),
+  };
+  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"] });
+  const server = app.listen(0);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await once(server, "listening");
+  const response = await new Promise((resolve, reject) => {
+    const request = get({
+      hostname: "127.0.0.1",
+      port: server.address().port,
+      path: "/api/dashboard-data",
+      headers: { "Accept-Encoding": "gzip" },
+    }, resolve);
+    request.on("error", reject);
+  });
+  const compressedBytes = await new Promise((resolve, reject) => {
+    let bytes = 0;
+    response.on("data", (chunk) => { bytes += chunk.length; });
+    response.on("error", reject);
+    response.on("end", () => resolve(bytes));
+  });
+
+  assert.equal(response.headers["content-encoding"], "gzip");
+  assert.ok(compressedBytes < 4.5 * 1024 * 1024);
+});
+
+test("Vercel handler serves health from a private persistent cache configuration", async (t) => {
+  const handler = createVercelHandler({
+    env: {
+      GITHUB_OWNER: "owner",
+      GITHUB_REPO: "private-data",
+      GITHUB_TOKEN: "server-only-token",
+      CORS_ORIGINS: "https://dashboard.example",
+    },
+    cacheStore: { read: async () => null, write: async () => {} },
+  });
+  const server = createServer(handler);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  server.listen(0);
+  await once(server, "listening");
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/health`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.configured, true);
+  assert.equal(payload.hasCachedData, false);
+  assert.equal(JSON.stringify(payload).includes("server-only-token"), false);
+  assert.throws(
+    () => createVercelHandler({ env: {}, cacheStore: { read: async () => null } }),
+    /Missing required backend environment variables/,
+  );
 });
 
 test("invalid GitHub credentials and insufficient permissions produce clear non-secret errors", async () => {

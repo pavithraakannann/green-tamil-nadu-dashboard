@@ -1,3 +1,4 @@
+import compression from "compression";
 import cors from "cors";
 import express from "express";
 
@@ -5,6 +6,7 @@ export function createApp({ dashboardService, allowedOrigins }) {
   const app = express();
   const origins = new Set(allowedOrigins);
   app.disable("x-powered-by");
+  app.use(compression());
   app.use(cors({
     origin(origin, callback) {
       if (!origin || origins.has(origin)) {

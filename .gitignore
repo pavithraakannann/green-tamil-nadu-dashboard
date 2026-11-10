@@ -6,6 +6,8 @@ dist/
 !backend/.env.example
 .cache/
 backend/.cache/
+.vercel/
+backend/.vercel/
 public/data/*.csv
 public/data/*.csv.gz
 !public/data/merge.csv.gz
