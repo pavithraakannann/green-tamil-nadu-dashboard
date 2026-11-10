@@ -1,7 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/[...route].js": {
+    "api/health.js": {
+      "maxDuration": 300
+    },
+    "api/dashboard-data.js": {
+      "maxDuration": 300
+    },
+    "api/refresh.js": {
       "maxDuration": 300
     }
   }
