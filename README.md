@@ -4,12 +4,11 @@ The existing React/Vite dashboard is deployed on GitHub Pages and reads privacy-
 
 ## Local development
 
-1. Copy `.env.example` to `.env` and set `VITE_API_BASE_URL=http://localhost:3001`.
-2. Copy `backend/.env.example` to `backend/.env`. Set `GITHUB_OWNER`, `GITHUB_REPO`, and a read-only `GITHUB_TOKEN` for the private source repository.
-3. Install frontend packages with `npm.cmd install` and API packages with `npm.cmd install --prefix backend`.
-4. Start the API with `npm.cmd run backend:dev`.
-5. In another terminal, start Vite with `npm.cmd run dev`.
-6. Open the local URL printed by Vite. Its `/api` requests are proxied to the local backend.
+1. Copy `backend/.env.example` to `backend/.env`. Set `GITHUB_OWNER`, `GITHUB_REPO`, and a read-only `GITHUB_TOKEN` for the private source repository. Do not commit `backend/.env`.
+2. Install frontend packages with `npm.cmd install` and API packages with `npm.cmd install --prefix backend`.
+3. Start the API with `npm.cmd run backend:dev`.
+4. In another terminal, start Vite with `npm.cmd run dev`. Vite proxies `/api` requests to `http://localhost:3001` by default; set `API_PROXY_TARGET` only if your backend uses another address.
+5. Open the local URL printed by Vite.
 
 Test the backend with `npm.cmd run backend:test`. Build the frontend with `npm.cmd run build`.
 
