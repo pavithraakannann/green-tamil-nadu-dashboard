@@ -19,7 +19,7 @@ const dashboardService = createDashboardService({
   repo: process.env.GITHUB_REPO.trim(),
   token: process.env.GITHUB_TOKEN.trim(),
   cacheFile: process.env.CACHE_FILE || resolve(".cache", "dashboard-data.json"),
-  cacheTtlMs: Number(process.env.CACHE_TTL_SECONDS || 900) * 1000,
+  cacheTtlMs: Number(process.env.CACHE_TTL_SECONDS || 300) * 1000,
 });
 
 await dashboardService.loadCache();

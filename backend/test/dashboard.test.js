@@ -33,11 +33,14 @@ test("aggregates only whitelisted dashboard dimensions and removes private colum
 test("GitHub release and asset-ID fetch use private-repository auth and correct headers", async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {
-    calls.push({ url: String(url), headers: options.headers });
+    calls.push({ url: String(url), headers: options.headers, cache: options.cache });
     if (String(url).endsWith("/releases/latest")) {
       return Response.json({
         published_at: "2026-11-01T00:00:00Z",
-        assets: [{ name: "merged.csv.gz", id: 21 }, { name: "palm_trees.csv", id: 22 }],
+        assets: [
+          { name: "merged.csv.gz", id: 21, updated_at: "2026-11-06T00:00:00Z" },
+          { name: "palm_trees.csv", id: 22, updated_at: "2026-11-06T00:01:00Z" },
+        ],
       });
     }
     const body = "District,Seedlings\nChennai,100\n";
@@ -52,8 +55,16 @@ test("GitHub release and asset-ID fetch use private-repository auth and correct 
     token: "test-token",
     fetchImpl,
   });
-  assert.deepEqual(release.assets.merge, { id: 21, name: "merged.csv.gz" });
-  assert.deepEqual(release.assets.palm, { id: 22, name: "palm_trees.csv" });
+  assert.deepEqual(release.assets.merge, {
+    id: 21,
+    name: "merged.csv.gz",
+    updatedAt: "2026-11-06T00:00:00Z",
+  });
+  assert.deepEqual(release.assets.palm, {
+    id: 22,
+    name: "palm_trees.csv",
+    updatedAt: "2026-11-06T00:01:00Z",
+  });
   const asset = await fetchReleaseAssetStream({
     owner: "owner",
     repo: "private-data",
@@ -65,6 +76,7 @@ test("GitHub release and asset-ID fetch use private-repository auth and correct 
   });
 
   assert.equal(release.releasePublishedAt, "2026-11-01T00:00:00Z");
+  assert.equal(release.sourceUpdatedAt, "2026-11-06T00:01:00Z");
   assert.equal(asset.compressed, true);
   assert.equal(
     gunzipSync(Buffer.from(await new Response(asset.body).arrayBuffer())).toString("utf8"),
@@ -72,6 +84,7 @@ test("GitHub release and asset-ID fetch use private-repository auth and correct 
   );
   assert.equal(calls[0].headers.Authorization, "Bearer test-token");
   assert.equal(calls[0].headers.Accept, "application/vnd.github+json");
+  assert.equal(calls[0].cache, "no-store");
   assert.equal(calls[1].url.endsWith("/releases/assets/21"), true);
   assert.equal(calls[1].headers.Accept, "application/octet-stream");
   assert.equal(calls[1].headers.Authorization, "Bearer test-token");

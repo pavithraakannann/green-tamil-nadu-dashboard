@@ -16,4 +16,4 @@ services:
       - key: CORS_ORIGINS
         value: https://pavithraakannann.github.io
       - key: CACHE_TTL_SECONDS
-        value: "900"
+        value: "300"

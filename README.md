@@ -25,7 +25,7 @@ Review the allowlist and confirm the source repository owner authorizes these gr
 1. Create a Render Web Service from this repository using `render.yaml` (or configure the service with `backend` as its root directory).
 2. Set `GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_TOKEN` in Render's environment settings. Use a fine-grained, read-only token scoped only to the source repository and required contents/releases access. Never put the token in a frontend variable.
 3. Set `CORS_ORIGINS` to `https://pavithraakannann.github.io` and deploy. Verify `https://<your-service>.onrender.com/api/health`.
-4. The backend caches the last successful pair of aggregates in process and synchronizes them together. Requests within `CACHE_TTL_SECONDS` use the cache; a failed refresh keeps serving the last successful cache with a warning. Manual refreshes are throttled to one GitHub synchronization per minute to limit API abuse.
+4. The backend caches the last successful pair of aggregates in process and synchronizes them together. Requests within `CACHE_TTL_SECONDS` use the cache (5 minutes by default); a failed refresh keeps serving the last successful cache with a warning. Manual refreshes are throttled to one GitHub synchronization per minute to limit API abuse. GitHub API requests bypass HTTP caches so replacement assets in an existing release are detected.
 
 ### Frontend (GitHub Pages)
 
@@ -33,7 +33,7 @@ Review the allowlist and confirm the source repository owner authorizes these gr
 2. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**.
 3. Run the Pages workflow. It requires the API URL variable and fails instead of deploying a site configured to call the wrong origin.
 
-The frontend loads cached dashboard data on startup. **Refresh data** requests an immediate paired refresh. The page shows the last successful synchronization time and a warning if an existing cache had to be retained. Health checks expose only API readiness and cache metadata.
+The frontend loads cached dashboard data on startup, checks for updates every 5 minutes, and checks again when a background tab becomes visible. **Refresh data** requests an immediate paired refresh. The page shows the last successful synchronization time, the latest source-asset update time, and a warning if an existing cache had to be retained. Health checks expose only API readiness and cache metadata.
 
 ## Dashboard features
 

@@ -43,7 +43,7 @@ export function createDashboardService({
     if (refreshPromise) return refreshPromise;
     lastRefreshAttemptAt = now().valueOf();
     refreshPromise = (async () => {
-      const { assets, releasePublishedAt } = await fetchLatestRelease({
+      const { assets, releasePublishedAt, sourceUpdatedAt } = await fetchLatestRelease({
         owner,
         repo,
         token,
@@ -69,6 +69,7 @@ export function createDashboardService({
         datasets,
         lastSyncedAt: now().toISOString(),
         releasePublishedAt,
+        sourceUpdatedAt,
       };
       await persistCache(nextCache);
       cache = nextCache;

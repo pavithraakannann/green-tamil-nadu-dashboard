@@ -44,6 +44,7 @@ async function request(fetchImpl, url, headers, action) {
     response = await fetchImpl(url, {
       headers,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      cache: "no-store",
     });
   } catch (error) {
     if (error.name === "TimeoutError" || error.name === "AbortError") {
@@ -80,11 +81,20 @@ export async function fetchLatestRelease({
     if (!asset || !Number.isSafeInteger(asset.id)) {
       throw new Error(`The latest release is missing the required ${source} CSV asset (expected one of: ${names.join(", ")}).`);
     }
-    return [source, { id: asset.id, name: asset.name }];
+    return [source, {
+      id: asset.id,
+      name: asset.name,
+      updatedAt: asset.updated_at ?? null,
+    }];
   }));
 
+  const assetUpdateTimes = Object.values(selectedAssets)
+    .map(({ updatedAt }) => updatedAt)
+    .filter(Boolean)
+    .sort();
   return {
     releasePublishedAt: release.published_at ?? null,
+    sourceUpdatedAt: assetUpdateTimes.at(-1) ?? null,
     assets: selectedAssets,
   };
 }

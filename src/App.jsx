@@ -65,6 +65,7 @@ const DEFAULT_FILTERS = {
 };
 const COLORS = ["#248451", "#69a879", "#d99545", "#5784a5", "#9d75b6", "#d16d52"];
 const ROWS_PER_PAGE = 25;
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v2";
 const LEGACY_DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v1";
 
@@ -1291,12 +1292,17 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState("");
+  const [sourceUpdatedAt, setSourceUpdatedAt] = useState("");
   const [syncWarning, setSyncWarning] = useState("");
   const [error, setError] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const hasDataRef = useRef(false);
+  const syncInProgressRef = useRef(false);
 
   async function loadData(forceRefresh = false) {
-    const hasData = datasets.length > 0;
+    if (syncInProgressRef.current) return;
+    syncInProgressRef.current = true;
+    const hasData = hasDataRef.current;
     setLoading(!hasData);
     setRefreshing(hasData);
     setError("");
@@ -1307,7 +1313,9 @@ export default function App() {
         setProgress((current) => ({ ...current, [source]: rows }));
       }, { forceRefresh });
       setDatasets(loaded.datasets);
+      hasDataRef.current = true;
       setLastSyncedAt(loaded.lastSyncedAt ?? "");
+      setSourceUpdatedAt(loaded.sourceUpdatedAt ?? "");
       setSyncWarning(loaded.warning);
     } catch (loadError) {
       const message = loadError.message || "An unexpected error occurred while loading dashboard data.";
@@ -1316,10 +1324,22 @@ export default function App() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      syncInProgressRef.current = false;
     }
   }
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    const intervalId = window.setInterval(() => loadData(), AUTO_REFRESH_INTERVAL_MS);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") loadData();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
 
   const options = useMemo(() => {
     const values = Object.fromEntries(FILTER_FIELDS.map((field) => [field, new Set()]));
@@ -1414,6 +1434,7 @@ export default function App() {
           <div className="topbar-right">
             <span className="topbar-source"><span /> Private GitHub data</span>
             {lastSyncedAt && <span className="sync-time">Synced {new Date(lastSyncedAt).toLocaleString()}</span>}
+            {sourceUpdatedAt && <span className="sync-time">Source updated {new Date(sourceUpdatedAt).toLocaleString()}</span>}
             <button className="button button-outline refresh-button" disabled={refreshing} onClick={() => loadData(true)}><RefreshCw className={refreshing ? "spin" : ""} size={15} /> {refreshing ? "Refreshing…" : "Refresh data"}</button>
             <div className="avatar">GT</div>
           </div>

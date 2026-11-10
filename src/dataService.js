@@ -40,6 +40,7 @@ async function fetchDashboardPayload(forceRefresh) {
   return {
     datasets,
     lastSyncedAt: payload.lastSyncedAt,
+    sourceUpdatedAt: payload.sourceUpdatedAt,
     warning: typeof payload.warning === "string" ? payload.warning : "",
   };
 }
