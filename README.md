@@ -20,12 +20,12 @@ Review the allowlist and confirm the source repository owner authorizes these gr
 
 ## Deployment
 
-### Backend API (Vercel)
+### Vercel deployment
 
-The frontend remains on GitHub Pages. Deploy the backend as a separate Vercel project:
+The Vercel project serves both the Vite dashboard and the backend API from the repository root. This is separate from the existing GitHub Pages deployment.
 
-1. Import this repository into Vercel. Set **Root Directory** to `backend` so Vercel deploys only the API and its Node.js dependencies. The Vercel function configuration allows up to 300 seconds for release downloads and parsing.
-2. In the Vercel project, create a **private Vercel Blob** store and connect it to this project. Enable the Vercel-managed OIDC environment variables for the connection; the Blob SDK uses these to read and write the private cache. The cached data contains dashboard aggregates, not raw CSV rows.
+1. Import this repository into Vercel and leave **Root Directory** set to the repository root (`./`). Vercel builds the Vite frontend and deploys `api/[...route].js` as the backend function. The function configuration allows up to 300 seconds for release downloads and parsing.
+2. In the Vercel project, create a **private Vercel Blob** store and connect it to this project. Keep the Blob store private; connect the store so the Blob SDK can use Vercel's managed credentials, or enable its read-write token environment variable. The cache contains dashboard aggregates, not raw CSV rows.
 3. Add these Vercel project environment variables:
    - `GITHUB_OWNER=greentamilnadumission`
    - `GITHUB_REPO=gtm-data`
@@ -34,12 +34,12 @@ The frontend remains on GitHub Pages. Deploy the backend as a separate Vercel pr
    - `CACHE_TTL_SECONDS=300`
 
    Keep the PAT only in Vercel's backend environment variables. Never add it to GitHub Actions variables, frontend configuration, or committed files.
-4. Deploy and verify `https://<your-vercel-project>.vercel.app/api/health`. Confirm it reports `configured: true`.
+4. Deploy and verify `https://<your-vercel-project>.vercel.app/api/health`. Confirm it reports `configured: true`. On Vercel, the dashboard uses the same-origin API automatically; do not set `VITE_API_BASE_URL` unless the API is on another host.
 5. The backend stores the last successful pair of aggregates in private Blob storage so the cache survives Vercel function cold starts. It synchronizes both assets together, keeps serving the prior cache after a failed refresh, and throttles manual refreshes to one GitHub synchronization per minute. GitHub API requests bypass HTTP caches so replacement assets in an existing release are detected.
 
 ### Frontend (GitHub Pages)
 
-1. Set the repository Actions variable `VITE_API_BASE_URL` to the deployed Vercel backend origin, for example `https://<your-vercel-project>.vercel.app` (no trailing slash).
+1. Set the repository Actions variable `VITE_API_BASE_URL` to the Vercel project origin, for example `https://<your-vercel-project>.vercel.app` (no trailing slash). GitHub Pages uses this Vercel API; the Vercel-hosted frontend uses its same-origin API.
 2. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**.
 3. Run the Pages workflow. It requires the API URL variable and fails instead of deploying a site configured to call the wrong origin.
 
