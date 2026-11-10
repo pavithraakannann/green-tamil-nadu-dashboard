@@ -24,7 +24,7 @@ Review the allowlist and confirm the source repository owner authorizes these gr
 
 The Vercel project serves both the Vite dashboard and the backend API from the repository root. This is separate from the existing GitHub Pages deployment.
 
-1. Import this repository into Vercel and leave **Root Directory** set to the repository root (`./`). Vercel builds the Vite frontend and deploys `api/[...route].js` as the backend function. The function configuration allows up to 300 seconds for release downloads and parsing.
+1. Import this repository into Vercel and leave **Root Directory** set to the repository root (`./`). Vercel builds the Vite frontend and deploys `api/health.js`, `api/dashboard-data.js`, and `api/refresh.js` as backend functions. The function configuration allows up to 300 seconds for release downloads and parsing.
 2. In the Vercel project, create a **private Vercel Blob** store and connect it to this project. Keep the Blob store private; connect the store so the Blob SDK can use Vercel's managed credentials, or enable its read-write token environment variable. The cache contains dashboard aggregates, not raw CSV rows.
 3. Add these Vercel project environment variables:
    - `GITHUB_OWNER=greentamilnadumission`
@@ -39,7 +39,7 @@ The Vercel project serves both the Vite dashboard and the backend API from the r
 
 ### Frontend (GitHub Pages)
 
-1. Set the repository Actions variable `VITE_API_BASE_URL` to the Vercel project origin, for example `https://<your-vercel-project>.vercel.app` (no trailing slash). GitHub Pages uses this Vercel API; the Vercel-hosted frontend uses its same-origin API.
+1. The Pages workflow uses `https://green-tamil-nadu-dashboard.vercel.app` by default. If your Vercel project uses another domain, set the repository Actions variable `VITE_API_BASE_URL` to that project origin (no trailing slash). GitHub Pages uses this Vercel API; the Vercel-hosted frontend uses its same-origin API.
 2. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**.
 3. Run the Pages workflow. It requires the API URL variable and fails instead of deploying a site configured to call the wrong origin.
 

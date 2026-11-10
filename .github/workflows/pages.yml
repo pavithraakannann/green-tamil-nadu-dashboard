@@ -27,15 +27,15 @@ jobs:
         run: npm ci
       - name: Require deployed API URL
         env:
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL != '' && vars.VITE_API_BASE_URL != 'https://your-vercel-project.vercel.app' && vars.VITE_API_BASE_URL || 'https://green-tamil-nadu-dashboard.vercel.app' }}
         run: |
           if [ -z "$VITE_API_BASE_URL" ]; then
-            echo "Configure the VITE_API_BASE_URL repository variable with the deployed Render API URL."
+            echo "Configure the VITE_API_BASE_URL repository variable with the deployed Vercel API URL."
             exit 1
           fi
       - name: Build Vite site
         env:
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL != '' && vars.VITE_API_BASE_URL != 'https://your-vercel-project.vercel.app' && vars.VITE_API_BASE_URL || 'https://green-tamil-nadu-dashboard.vercel.app' }}
         run: npm run build
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

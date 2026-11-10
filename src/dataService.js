@@ -19,7 +19,10 @@ async function fetchDashboardPayload(forceRefresh) {
     throw new Error(`The dashboard API returned an invalid response (HTTP ${response.status}).`);
   }
   if (!response.ok) {
-    throw new Error(payload.error || `The dashboard API returned HTTP ${response.status}.`);
+    const apiError = typeof payload.error === "string"
+      ? payload.error
+      : payload.error ? JSON.stringify(payload.error) : "";
+    throw new Error(apiError || `The dashboard API returned HTTP ${response.status}.`);
   }
   if (!Array.isArray(payload.datasets) || payload.datasets.length !== 2) {
     throw new Error("The dashboard API did not return both aggregated datasets.");
