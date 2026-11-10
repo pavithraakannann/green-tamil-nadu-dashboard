@@ -170,6 +170,12 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .report-controls { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding: 13px 15px; border: 1px solid #e7ece7; border-radius: 9px; background: #fff; }
 .department-year-filter { justify-content: flex-start; }
+.gov-department-filter { gap: 12px; flex-wrap: wrap; }
+.gov-department-select { min-width: min(420px, 100%); }
+.gov-department-select select { width: 100%; }
+.gov-abstract-tables { margin-top: 14px; }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover td { background: #f2f7f2; }
 .forest-detail-filters { flex-wrap: wrap; justify-content: flex-start; gap: 12px 24px; }
 .forest-filter { flex: 1 1 220px; justify-content: space-between; }
 .forest-filter-select { flex: 0 1 220px; }
@@ -212,6 +218,16 @@ tbody tr:last-child td { border-bottom: 0; }
 .error-icon { width: 39px; height: 39px; display: grid; place-items: center; border-radius: 50%; color: #b8564b; background: #fcf0ef; }
 .loading-card .button { margin-top: 17px; }
 .loading-card small { margin-top: 17px; color: #98a29a; font-size: 9px; }
+.login-card { align-items: stretch; text-align: left; }
+.login-card h1, .login-card p { text-align: center; }
+.login-field { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; color: #4d5f52; font-size: 11px; font-weight: 600; }
+.login-field input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #dfe8df; border-radius: 8px; color: #24402e; font: inherit; font-size: 13px; font-weight: 500; background: #fbfdfb; }
+.login-field input:focus { outline: 2px solid #23845233; border-color: var(--green); }
+.login-card .login-submit { justify-content: center; margin-top: 18px; }
+.login-error, .login-notice { margin-top: 12px; padding: 9px 11px; border-radius: 8px; font-size: 11px; line-height: 1.5; }
+.login-error { border: 1px solid #f0c9c0; color: #9a3a26; background: #fdf3f0; }
+.login-notice { border: 1px solid #e8dcc0; color: #7a5a1c; background: #fdf8ec; }
+.session-badge { max-width: 260px; overflow: hidden; padding: 6px 10px; border: 1px solid #dfe9df; border-radius: 999px; color: #376a46; font-size: 11px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; background: #eff6ed; }
 .mobile-menu, .mobile-close, .mobile-backdrop { display: none; }
 
 @media (max-width: 1100px) {
@@ -234,7 +250,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .topbar { height: 59px; padding: 0 16px; }
   .topbar-left { display: flex; align-items: center; gap: 10px; }
   .mobile-menu { display: grid; place-items: center; padding: 5px; border: 0; color: #4a5c4d; background: transparent; }
-  .topbar-source, .avatar, .sync-time { display: none; }
+  .topbar-source, .avatar, .sync-time, .session-badge { display: none; }
   .topbar-right { gap: 8px; }
   .refresh-button { height: 32px; padding: 0 9px; font-size: 9px; }
   .page-content { padding: 23px 16px 15px; }

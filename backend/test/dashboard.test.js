@@ -6,6 +6,26 @@ import { createDashboardService } from "../src/dashboardService.js";
 import { aggregateCsv, aggregateCsvStream } from "../src/csvService.js";
 import { fetchLatestRelease, fetchReleaseAssetStream } from "../src/githubService.js";
 import { createVercelHandler } from "../src/vercelHandler.js";
+import { createAuth, listDepartments, payloadForSession } from "../src/auth.js";
+
+const TEST_AUTH_ENV = {
+  AUTH_SECRET: "test-secret-that-is-at-least-32-characters-long",
+  ADMIN_USERNAME: "admin",
+  ADMIN_PASSWORD: "admin-pass-123",
+  DEPARTMENT_PASSWORD: "dept-pass-123",
+};
+const testAuth = () => createAuth({ env: TEST_AUTH_ENV });
+
+async function loginToken(baseUrl, username, password) {
+  const response = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200, payload.error);
+  return payload.token;
+}
 import { Readable } from "node:stream";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { createServer, get } from "node:http";
@@ -229,16 +249,17 @@ test("API exposes only aggregate payloads and permits only configured browser or
     }),
     forceRefresh: async () => ({ datasets: [], lastSyncedAt: null, warning: "" }),
   };
-  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"] });
+  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"], auth: testAuth() });
   const server = app.listen(0);
   t.after(() => new Promise((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   }));
   await once(server, "listening");
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const token = await loginToken(baseUrl, "admin", "admin-pass-123");
 
   const allowedResponse = await fetch(`${baseUrl}/api/dashboard-data`, {
-    headers: { Origin: "https://dashboard.example" },
+    headers: { Origin: "https://dashboard.example", Authorization: `Bearer ${token}` },
   });
   const payload = await allowedResponse.json();
   assert.equal(allowedResponse.headers.get("access-control-allow-origin"), "https://dashboard.example");
@@ -275,18 +296,19 @@ test("compresses large API responses to fit serverless response limits", async (
     }),
     forceRefresh: async () => ({ datasets: [], warning: "" }),
   };
-  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"] });
+  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"], auth: testAuth() });
   const server = app.listen(0);
   t.after(() => new Promise((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   }));
   await once(server, "listening");
+  const token = await loginToken(`http://127.0.0.1:${server.address().port}`, "admin", "admin-pass-123");
   const response = await new Promise((resolve, reject) => {
     const request = get({
       hostname: "127.0.0.1",
       port: server.address().port,
       path: "/api/dashboard-data",
-      headers: { "Accept-Encoding": "gzip" },
+      headers: { "Accept-Encoding": "gzip", Authorization: `Bearer ${token}` },
     }, resolve);
     request.on("error", reject);
   });
@@ -350,4 +372,111 @@ test("invalid GitHub credentials and insufficient permissions produce clear non-
       },
     );
   }
+});
+
+function departmentFixture() {
+  return {
+    datasets: [{
+      source: "merge",
+      headers: ["District", "Gov Department Type", "Seedlings", "Record Count"],
+      rows: [
+        ["Chennai", "Police", "10", "1"],
+        ["Madurai", "POLICE", "5", "1"],
+        ["Salem", "Rural Development and Panchayat Raj", "20", "2"],
+        ["Erode", "", "7", "1"],
+      ],
+    }, {
+      source: "palm",
+      headers: ["District", "Seedlings", "Record Count"],
+      rows: [["Chennai", "3", "1"]],
+    }],
+    lastSyncedAt: "2026-11-10T00:00:00.000Z",
+    warning: "",
+  };
+}
+
+test("department logins see only their own government department rows", async (t) => {
+  const dashboardService = {
+    getStatus: () => ({ status: "ok", configured: true, hasCachedData: true, lastSyncedAt: null }),
+    getDashboardData: async () => departmentFixture(),
+    forceRefresh: async () => departmentFixture(),
+  };
+  const app = createApp({ dashboardService, allowedOrigins: [], auth: testAuth() });
+  const server = app.listen(0);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await once(server, "listening");
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const anonymous = await fetch(`${baseUrl}/api/dashboard-data`);
+  assert.equal(anonymous.status, 401);
+  const forged = await fetch(`${baseUrl}/api/dashboard-data`, { headers: { Authorization: "Bearer abc.def" } });
+  assert.equal(forged.status, 401);
+
+  const token = await loginToken(baseUrl, "POLICE", "dept-pass-123");
+  for (const request of [
+    fetch(`${baseUrl}/api/dashboard-data`, { headers: { Authorization: `Bearer ${token}` } }),
+    fetch(`${baseUrl}/api/refresh`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
+  ]) {
+    const payload = await (await request).json();
+    assert.deepEqual(payload.datasets[0].rows.map((row) => row[0]), ["Chennai", "Madurai"]);
+    assert.deepEqual(payload.datasets[1].rows, []);
+  }
+
+  const adminToken = await loginToken(baseUrl, "admin", "admin-pass-123");
+  const adminPayload = await (await fetch(`${baseUrl}/api/dashboard-data`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  })).json();
+  assert.equal(adminPayload.datasets[0].rows.length, 4);
+  assert.equal(adminPayload.datasets[1].rows.length, 1);
+
+  for (const [username, password] of [
+    ["POLICE", "admin-pass-123"],
+    ["admin", "dept-pass-123"],
+    ["UNKNOWN DEPARTMENT", "dept-pass-123"],
+    ["", "dept-pass-123"],
+  ]) {
+    const response = await fetch(`${baseUrl}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    assert.equal(response.status, 401, username);
+  }
+});
+
+test("auth tokens expire, reject tampering, and per-department passwords override the shared one", async () => {
+  let clock = 1_000;
+  const auth = createAuth({
+    env: { ...TEST_AUTH_ENV, DEPARTMENT_PASSWORDS: JSON.stringify({ police: "police-only" }) },
+    now: () => clock,
+  });
+  const departments = async () => listDepartments(departmentFixture());
+  assert.deepEqual(await departments(), ["POLICE", "RURAL DEVELOPMENT AND PANCHAYAT RAJ"]);
+
+  assert.equal((await auth.login({ username: "POLICE", password: "dept-pass-123" }, departments)).status, 401);
+  const police = await auth.login({ username: "police", password: "police-only" }, departments);
+  assert.equal(police.department, "POLICE");
+  const [body, signature] = police.token.split(".");
+  const tamperedBody = Buffer.from(JSON.stringify({ role: "admin", exp: clock + 1e9 })).toString("base64url");
+  assert.equal(auth.verifyToken(`${tamperedBody}.${signature}`), null);
+  assert.equal(auth.verifyToken(`${body}.${signature}`).department, "POLICE");
+  clock += 13 * 60 * 60 * 1000;
+  assert.equal(auth.verifyToken(police.token), null);
+
+  const filtered = payloadForSession(departmentFixture(), { role: "department", department: "RURAL DEVELOPMENT AND PANCHAYAT RAJ" });
+  assert.deepEqual(filtered.datasets[0].rows.map((row) => row[0]), ["Salem"]);
+});
+
+test("login fails closed when not configured and rate-limits repeated failures", async () => {
+  const unconfigured = createAuth({ env: {} });
+  assert.equal((await unconfigured.login({ username: "admin", password: "x" }, async () => [])).status, 503);
+  assert.equal(unconfigured.verifyToken("a.b"), null);
+
+  const auth = testAuth();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    assert.equal((await auth.login({ username: "admin", password: "wrong", clientKey: "ip" }, async () => [])).status, 401);
+  }
+  assert.equal((await auth.login({ username: "admin", password: "admin-pass-123", clientKey: "ip" }, async () => [])).status, 429);
 });

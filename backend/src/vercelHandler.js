@@ -1,4 +1,5 @@
 import { createApp } from "./app.js";
+import { createAuth } from "./auth.js";
 import { createDashboardService } from "./dashboardService.js";
 
 export function createVercelHandler({
@@ -27,7 +28,7 @@ export function createVercelHandler({
     now,
   });
   const cacheReady = dashboardService.loadCache();
-  const app = createApp({ dashboardService, allowedOrigins });
+  const app = createApp({ dashboardService, allowedOrigins, auth: createAuth({ env }) });
 
   return async function handler(request, response) {
     await cacheReady;

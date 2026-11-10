@@ -6,6 +6,7 @@ import {
   ArrowDownUp,
   ArrowUp,
   BarChart3,
+  Building2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -14,6 +15,8 @@ import {
   FilterX,
   Leaf,
   LoaderCircle,
+  Lock,
+  LogOut,
   MapPin,
   Menu,
   RefreshCw,
@@ -37,13 +40,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { refreshDashboardData } from "./dataService.js";
+import { login, refreshDashboardData, UnauthorizedError } from "./dataService.js";
 import { circleForDivision } from "./divisionCircles.js";
 
 const NAV_ITEMS = [
   { id: "overview", label: "Overview", icon: BarChart3 },
   { id: "merge", label: "Merge data", icon: Table2 },
   { id: "palm", label: "Palm data", icon: TreePine },
+  { id: "gov-departments", label: "Govt departments", icon: Building2 },
   { id: "reports", label: "Reports", icon: FileBarChart },
 ];
 const FILTER_FIELDS = ["District", "Circle", "Division", "Year", "Species", "Scheme"];
@@ -68,6 +72,7 @@ const ROWS_PER_PAGE = 25;
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v2";
 const LEGACY_DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v1";
+const SESSION_STORAGE_KEY = "green-tamil-nadu-session-v1";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
 const compactFormat = new Intl.NumberFormat("en-IN", {
@@ -308,6 +313,96 @@ function groupData(datasetRows, field, metric) {
     .sort((a, b) => b[metric] - a[metric] || a.name.localeCompare(b.name));
 }
 
+function tokenExpiry(token) {
+  try {
+    const body = token.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(body.padEnd(Math.ceil(body.length / 4) * 4, "=")));
+    return typeof payload.exp === "number" ? payload.exp : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function loadSession() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "null");
+    if (
+      saved
+      && typeof saved.token === "string"
+      && (saved.role === "admin" || (saved.role === "department" && typeof saved.department === "string"))
+      && tokenExpiry(saved.token) > Date.now()
+    ) return saved;
+  } catch {
+    // Ignore unreadable storage and show the login page.
+  }
+  return null;
+}
+
+function saveSession(session) {
+  try {
+    if (session) window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    else window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // The session still works for this page view without storage.
+  }
+}
+
+function LoginPage({ onLogin, notice }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState("");
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setLoginError("");
+    try {
+      onLogin(await login(username.trim(), password));
+    } catch (submitError) {
+      setLoginError(submitError.message || "Login failed.");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="loading-screen">
+      <div className="loading-mark"><Leaf size={27} /></div>
+      <form className="loading-card login-card" onSubmit={handleSubmit}>
+        <h1>Green Tamil Nadu Mission</h1>
+        <p>Sign in to view the planting dashboard.</p>
+        {notice && <div className="login-notice" role="status">{notice}</div>}
+        <label className="login-field">
+          <span>Login ID</span>
+          <input
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+            placeholder="admin or DEPARTMENT NAME"
+            required
+          />
+        </label>
+        <label className="login-field">
+          <span>Password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        {loginError && <div className="login-error" role="alert">{loginError}</div>}
+        <button className="button button-primary login-submit" type="submit" disabled={submitting}>
+          {submitting ? <LoaderCircle className="spin" size={16} /> : <Lock size={16} />}
+          {submitting ? "Signing in…" : "Sign in"}
+        </button>
+        <small>Government departments: your login ID is your department name in CAPITAL letters.</small>
+      </form>
+    </main>
+  );
+}
+
 function LoadingScreen({ progress, error, onRetry }) {
   const totalRows = progress.merge + progress.palm;
   return (
@@ -503,7 +598,227 @@ function DivisionDetails({ division, rows, onBack }) {
   );
 }
 
-function DepartmentBreakdown({ rows, field, title }) {
+function govDepartmentAt(dataset, row) {
+  return dataset.source === "palm" ? "" : valueAt(dataset, row, "Gov Department Type");
+}
+
+function AbstractTable({ title, subtitle, label, groups, onSelect }) {
+  const totalRecords = groups.reduce((total, group) => total + group.records, 0);
+  const totalSeedlings = groups.reduce((total, group) => total + group.seedlings, 0);
+
+  return (
+    <section className="report-table-card">
+      <div className="report-table-heading">
+        <div><h2>{title}</h2><p>{subtitle}</p></div>
+        <span>{formatNumber(groups.length)} groups</span>
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead><tr><th>{label}</th><th>Planting records</th><th>Seedlings reported</th><th>Share of seedlings</th></tr></thead>
+          <tbody>
+            {groups.map((group, index) => (
+              <tr
+                key={group.name}
+                className={onSelect ? "clickable-row" : undefined}
+                onClick={onSelect ? () => onSelect(group.name) : undefined}
+                title={onSelect ? `View ${group.name} dashboard` : undefined}
+              >
+                <td><span className="rank-cell">{String(index + 1).padStart(2, "0")}</span>{group.name}</td>
+                <td>{formatNumber(group.records)}</td>
+                <td>{formatNumber(group.seedlings)}</td>
+                <td>{totalSeedlings ? `${((group.seedlings / totalSeedlings) * 100).toFixed(1)}%` : "-"}</td>
+              </tr>
+            ))}
+            {!groups.length && (
+              <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No data found</strong><span>Change the filters and try again.</span></td></tr>
+            )}
+            {groups.length > 0 && (
+              <tr className="totals-row"><td>Total</td><td>{formatNumber(totalRecords)}</td><td>{formatNumber(totalSeedlings)}</td><td>100%</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function SimpleBarChart({ data, dataKey, label, color, height = 280 }) {
+  if (!data.length) return <EmptyChart />;
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 8, right: 12, bottom: 42, left: 0 }}>
+        <CartesianGrid stroke="#edf1ed" vertical={false} />
+        <XAxis dataKey="name" angle={-30} textAnchor="end" interval={0} height={70} tick={{ fontSize: 10, fill: "#718074" }} axisLine={false} tickLine={false} />
+        <YAxis tickFormatter={(value) => compactFormat.format(value)} tick={{ fontSize: 10, fill: "#849087" }} axisLine={false} tickLine={false} width={45} />
+        <Tooltip formatter={(value) => [formatNumber(value), label]} cursor={{ fill: "#f2f7f2" }} />
+        <Bar dataKey={dataKey} fill={color} radius={[5, 5, 0, 0]} maxBarSize={38} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, lockedDepartment = "" }) {
+  const department = lockedDepartment ? "all" : selectedDepartment;
+  const allGovRows = useMemo(
+    () => rows.filter(({ dataset, row }) => govDepartmentAt(dataset, row)),
+    [rows],
+  );
+  const years = useMemo(
+    () => uniqueSorted([...allGovRows.map(({ dataset, row }) => valueAt(dataset, row, "Year")), currentReportingYear()]),
+    [allGovRows],
+  );
+  const yearRows = useMemo(
+    () => (year === "all" ? allGovRows : allGovRows.filter(({ dataset, row }) => valueAt(dataset, row, "Year") === year)),
+    [allGovRows, year],
+  );
+  const districts = useMemo(
+    () => uniqueSorted([...yearRows.map(({ dataset, row }) => valueAt(dataset, row, "District")), ...(district === "all" ? [] : [district])]),
+    [yearRows, district],
+  );
+  const govRows = useMemo(
+    () => (district === "all" ? yearRows : yearRows.filter(({ dataset, row }) => valueAt(dataset, row, "District") === district)),
+    [yearRows, district],
+  );
+  const yearLabel = year === "all" ? "All years" : year;
+  const departments = useMemo(
+    () => groupData(govRows, "Gov Department Type", "seedlings"),
+    [govRows],
+  );
+  const departmentOptions = useMemo(
+    () => uniqueSorted([...departments.map((group) => group.name), ...(department === "all" ? [] : [department])]),
+    [departments, department],
+  );
+  const selectedRows = useMemo(
+    () => (department === "all" ? govRows : govRows.filter(({ dataset, row }) => govDepartmentAt(dataset, row) === department)),
+    [govRows, department],
+  );
+  const selectedSummary = useMemo(() => summarize(selectedRows), [selectedRows]);
+  const byDistrict = useMemo(() => groupData(selectedRows, "District", "seedlings"), [selectedRows]);
+  const byYear = useMemo(
+    () => groupData(selectedRows, "Year", "seedlings").sort((a, b) => a.name.localeCompare(b.name)),
+    [selectedRows],
+  );
+  const bySpecies = useMemo(() => groupData(selectedRows, "Species", "seedlings"), [selectedRows]);
+  const byScheme = useMemo(() => groupData(selectedRows, "Scheme", "seedlings"), [selectedRows]);
+  const isAll = department === "all" && !lockedDepartment;
+  const departmentTitle = lockedDepartment || department;
+
+  function downloadAbstract() {
+    const groups = isAll ? departments : byDistrict;
+    const header = isAll ? "Government Department" : "District";
+    const abstractRows = groups.map((group) => [group.name, group.records, group.seedlings]);
+    const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const suffix = `${isAll ? "govt-departments" : slug(departmentTitle)}-${slug(yearLabel)}-abstract`;
+    downloadCsv(
+      { source: "gov-department", headers: [header, "Planting records", "Seedlings reported"] },
+      abstractRows,
+      suffix,
+    );
+  }
+
+  return (
+    <>
+      <SectionHeading
+        eyebrow="Government department abstract"
+        title={isAll ? "Government departments" : departmentTitle}
+        description={isAll
+          ? "Abstract of geotagged planting by government department. Select a department to see its dashboard."
+          : "Abstract dashboard of geotagged planting for the selected government department."}
+        action={<button className="button button-primary" onClick={downloadAbstract}><Download size={16} /> Export abstract CSV</button>}
+      />
+      <div className="report-controls gov-department-filter">
+        {!lockedDepartment && (
+        <label className="report-selector" htmlFor="gov-department-select">
+          <span>Government department</span>
+          <span className="select-wrap report-select gov-department-select">
+            <select id="gov-department-select" value={department} onChange={(event) => setDepartment(event.target.value)}>
+              <option value="all">All government departments</option>
+              {departmentOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        )}
+        <label className="report-selector" htmlFor="gov-year-select">
+          <span>Year</span>
+          <span className="select-wrap report-select">
+            <select id="gov-year-select" value={year} onChange={(event) => setYear(event.target.value)}>
+              <option value="all">All years</option>
+              {years.map((option) => (
+                <option key={option} value={option}>
+                  {option === currentReportingYear() ? `${option} (current year)` : option}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        <label className="report-selector" htmlFor="gov-district-select">
+          <span>District</span>
+          <span className="select-wrap report-select">
+            <select id="gov-district-select" value={district} onChange={(event) => setDistrict(event.target.value)}>
+              <option value="all">All districts</option>
+              {districts.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        {!isAll && !lockedDepartment && (
+          <button className="button button-outline" onClick={() => setDepartment("all")}>
+            <ArrowLeft size={15} /> All departments
+          </button>
+        )}
+      </div>
+      <div className="stat-grid">
+        <StatCard title="Seedlings reported" value={formatNumber(selectedSummary.seedlings)} note={`${yearLabel} · ${isAll ? `${formatNumber(departments.length)} departments` : "selected department"}`} icon={Sprout} />
+        <StatCard title="Planting records" value={formatNumber(selectedSummary.records)} note="Geotagged records" icon={FileBarChart} tone="mint" />
+        <StatCard title="Districts covered" value={formatNumber(selectedSummary.districts)} note={`${formatNumber(selectedSummary.divisions)} divisions`} icon={MapPin} tone="gold" />
+        <StatCard title="Species planted" value={formatNumber(selectedSummary.species)} note={`${formatNumber(selectedSummary.schemes)} schemes`} icon={TreePine} tone="blue" />
+      </div>
+      <div className="charts-grid">
+        {isAll && (
+          <ChartCard title="Seedlings by department" subtitle="Seedlings reported · top 10 departments" className="chart-wide">
+            <SimpleBarChart data={departments.slice(0, 10)} dataKey="seedlings" label="Seedlings" color="#278452" height={320} />
+          </ChartCard>
+        )}
+        <ChartCard title="Seedlings by district" subtitle="Seedlings reported · top 12 districts" className={isAll ? "" : "chart-wide"}>
+          <SimpleBarChart data={byDistrict.slice(0, 12)} dataKey="seedlings" label="Seedlings" color={isAll ? "#6ba77b" : "#278452"} />
+        </ChartCard>
+        <ChartCard title="Seedlings by year" subtitle="Seedlings reported per planting year">
+          <SimpleBarChart data={byYear} dataKey="seedlings" label="Seedlings" color="#5784a5" />
+        </ChartCard>
+        <ChartCard title="Top species" subtitle="Seedlings reported · top 8 species">
+          <SimpleBarChart data={bySpecies.slice(0, 8)} dataKey="seedlings" label="Seedlings" color="#d99848" />
+        </ChartCard>
+        {!isAll && (
+          <ChartCard title="Schemes" subtitle="Seedlings reported · top 6 schemes">
+            <SimpleBarChart data={byScheme.slice(0, 6)} dataKey="seedlings" label="Seedlings" color="#9d75b6" />
+          </ChartCard>
+        )}
+      </div>
+      <div className="gov-abstract-tables">
+        {isAll ? (
+          <AbstractTable
+            title="Department-wise abstract"
+            subtitle="Click a department to open its dashboard."
+            label="Government department"
+            groups={departments}
+            onSelect={setDepartment}
+          />
+        ) : (
+          <AbstractTable
+            title="District-wise abstract"
+            subtitle={`Planting records and seedlings for ${departmentTitle} by district.`}
+            label="District"
+            groups={byDistrict}
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+function DepartmentBreakdown({ rows, field, title, onSelect }) {
   const grouped = useMemo(() => {
     const groups = new Map();
     for (const { dataset, row } of rows) {
@@ -529,7 +844,11 @@ function DepartmentBreakdown({ rows, field, title }) {
         <thead><tr><th>{title}</th><th>Seedlings reported</th></tr></thead>
         <tbody>
           {grouped.map((group) => (
-            <tr key={group.name}>
+            <tr
+              key={group.name}
+              className={onSelect && group.name !== "Others" ? "clickable-row" : undefined}
+              onClick={onSelect && group.name !== "Others" ? () => onSelect(group.name) : undefined}
+            >
               <td>{group.name}</td>
               <td>{formatNumber(group.seedlings)}</td>
             </tr>
@@ -903,7 +1222,7 @@ function LocationSeedlingDetails({ title, rows, onBack }) {
   );
 }
 
-function OtherDepartmentDetails({ rows, filters, setFilters, options, onBack }) {
+function OtherDepartmentDetails({ rows, filters, setFilters, options, onBack, onViewGovDepartment }) {
   const totalSeedlings = rows.reduce((total, { dataset, row }) => total + countAt(dataset, row), 0);
 
   return (
@@ -935,7 +1254,7 @@ function OtherDepartmentDetails({ rows, filters, setFilters, options, onBack }) 
       </div>
       <div className="department-breakdowns">
         <DepartmentBreakdown rows={rows} field="Department Type" title="Department Type" />
-        <DepartmentBreakdown rows={rows} field="Gov Department Type" title="Government Department Type" />
+        <DepartmentBreakdown rows={rows} field="Gov Department Type" title="Government Department Type" onSelect={onViewGovDepartment} />
       </div>
     </>
   );
@@ -1284,9 +1603,36 @@ function Reports({ datasets, rows, summary, options, filters, setFilters, onClea
 }
 
 export default function App() {
+  const [session, setSession] = useState(loadSession);
+  const [notice, setNotice] = useState("");
+
+  function handleLogin(nextSession) {
+    saveSession(nextSession);
+    setNotice("");
+    setSession(nextSession);
+  }
+
+  function handleLogout(message = "") {
+    saveSession(null);
+    setNotice(message);
+    setSession(null);
+  }
+
+  if (!session) return <LoginPage onLogin={handleLogin} notice={notice} />;
+  return <Dashboard key={session.token} session={session} onLogout={handleLogout} />;
+}
+
+const DEPARTMENT_NAV_ITEMS = [{ id: "gov-departments", label: "Department dashboard", icon: Building2 }];
+
+function Dashboard({ session, onLogout }) {
+  const isAdmin = session.role === "admin";
+  const navItems = isAdmin ? NAV_ITEMS : DEPARTMENT_NAV_ITEMS;
   const [datasets, setDatasets] = useState([]);
-  const [activePage, setActivePage] = useState("overview");
+  const [activePage, setActivePage] = useState(isAdmin ? "overview" : "gov-departments");
   const [selectedDivision, setSelectedDivision] = useState("");
+  const [selectedGovDepartment, setSelectedGovDepartment] = useState("all");
+  const [govYear, setGovYear] = useState(() => currentReportingYear());
+  const [govDistrict, setGovDistrict] = useState("all");
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [progress, setProgress] = useState({ merge: 0, palm: 0 });
   const [loading, setLoading] = useState(true);
@@ -1311,13 +1657,17 @@ export default function App() {
     try {
       const loaded = await refreshDashboardData(({ source, rows }) => {
         setProgress((current) => ({ ...current, [source]: rows }));
-      }, { forceRefresh });
+      }, { forceRefresh, token: session.token });
       setDatasets(loaded.datasets);
       hasDataRef.current = true;
       setLastSyncedAt(loaded.lastSyncedAt ?? "");
       setSourceUpdatedAt(loaded.sourceUpdatedAt ?? "");
       setSyncWarning(loaded.warning);
     } catch (loadError) {
+      if (loadError instanceof UnauthorizedError) {
+        onLogout(loadError.message);
+        return;
+      }
       const message = loadError.message || "An unexpected error occurred while loading dashboard data.";
       if (hasData) setSyncWarning(message);
       else setError(message);
@@ -1362,6 +1712,10 @@ export default function App() {
     () => filteredDatasets.flatMap((dataset) => dataset.filteredRows.map((row) => ({ dataset, row }))),
     [filteredDatasets],
   );
+  const allRows = useMemo(
+    () => datasets.flatMap((dataset) => dataset.rows.map((row) => ({ dataset, row }))),
+    [datasets],
+  );
   const summary = useMemo(() => summarize(chartRows), [chartRows]);
   const datasetSummaries = useMemo(
     () => filteredDatasets.map((dataset) => ({ ...dataset, summary: summarize(dataset.filteredRows.map((row) => ({ dataset, row }))) })),
@@ -1381,6 +1735,15 @@ export default function App() {
 
   function viewOtherDepartmentDetails() {
     setActivePage("other-department-details");
+    setMobileNavOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function viewGovDepartment(department) {
+    setSelectedGovDepartment(department);
+    if (filters.Year !== "all") setGovYear(filters.Year);
+    setGovDistrict("all");
+    setActivePage("gov-departments");
     setMobileNavOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -1408,12 +1771,12 @@ export default function App() {
       <aside className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-emblem"><Leaf size={23} /></div>
-          <div><strong>Green Tamil Nadu</strong><span>FOREST DEPARTMENT</span></div>
+          <div><strong>Green Tamil Nadu</strong><span>{isAdmin ? "FOREST DEPARTMENT" : "DEPARTMENT LOGIN"}</span></div>
           <button className="mobile-close" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}><X size={20} /></button>
         </div>
         <div className="nav-caption">WORKSPACE</div>
         <nav className="side-nav">
-          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+          {navItems.map(({ id, label, icon: Icon }) => (
             <button key={id} className={activePage === id ? "nav-item active" : "nav-item"} onClick={() => { setActivePage(id); setMobileNavOpen(false); }}>
             <Icon size={18} strokeWidth={1.8} /><span>{label}</span>
             </button>
@@ -1429,20 +1792,23 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
-            <div className="breadcrumb"><span>Green Tamil Nadu</span><span className="crumb-slash">/</span><strong>{activePage === "division-details" ? selectedDivision : activePage === "other-department-details" ? "Other departments" : activePage === "forest-department-details" ? "Forest Department" : activePage === "palm-details" ? "Palm seedlings" : NAV_ITEMS.find((item) => item.id === activePage)?.label}</strong></div>
+            <div className="breadcrumb"><span>Green Tamil Nadu</span><span className="crumb-slash">/</span><strong>{activePage === "division-details" ? selectedDivision : activePage === "other-department-details" ? "Other departments" : activePage === "forest-department-details" ? "Forest Department" : activePage === "palm-details" ? "Palm seedlings" : navItems.find((item) => item.id === activePage)?.label}</strong></div>
           </div>
           <div className="topbar-right">
             <span className="topbar-source"><span /> Private GitHub data</span>
             {lastSyncedAt && <span className="sync-time">Synced {new Date(lastSyncedAt).toLocaleString()}</span>}
             {sourceUpdatedAt && <span className="sync-time">Source updated {new Date(sourceUpdatedAt).toLocaleString()}</span>}
             <button className="button button-outline refresh-button" disabled={refreshing} onClick={() => loadData(true)}><RefreshCw className={refreshing ? "spin" : ""} size={15} /> {refreshing ? "Refreshing…" : "Refresh data"}</button>
-            <div className="avatar">GT</div>
+            <span className="session-badge" title={isAdmin ? "Administrator" : session.department}>
+              {isAdmin ? "Admin" : session.department}
+            </span>
+            <button className="button button-outline" onClick={() => onLogout()}><LogOut size={15} /> Log out</button>
           </div>
         </header>
 
         <div className="page-content">
           {syncWarning && <div className="sync-notice" role="status">{syncWarning}</div>}
-          {activePage === "overview" && (
+          {isAdmin && activePage === "overview" && (
             <Overview
               summary={summary}
               chartRows={chartRows}
@@ -1457,7 +1823,7 @@ export default function App() {
               onViewPalmDetails={viewPalmDetails}
             />
           )}
-          {activePage === "forest-department-details" && (
+          {isAdmin && activePage === "forest-department-details" && (
             <LocationSeedlingDetails
               title="Forest Department"
               rows={chartRows.filter(({ dataset, row }) => (
@@ -1467,14 +1833,14 @@ export default function App() {
               onBack={() => setActivePage("overview")}
             />
           )}
-          {activePage === "palm-details" && (
+          {isAdmin && activePage === "palm-details" && (
             <LocationSeedlingDetails
               title="Palm seedlings"
               rows={chartRows.filter(({ dataset }) => dataset.source === "palm")}
               onBack={() => setActivePage("overview")}
             />
           )}
-          {activePage === "division-details" && selectedDivision && (
+          {isAdmin && activePage === "division-details" && selectedDivision && (
             <DivisionDetails
               division={selectedDivision}
               rows={chartRows.filter(({ dataset, row }) => (
@@ -1483,7 +1849,7 @@ export default function App() {
               onBack={() => setActivePage("overview")}
             />
           )}
-          {activePage === "other-department-details" && (
+          {isAdmin && activePage === "other-department-details" && (
             <OtherDepartmentDetails
               rows={chartRows.filter(({ dataset, row }) => (
                 dataset.source !== "palm"
@@ -1493,15 +1859,34 @@ export default function App() {
               setFilters={setFilters}
               options={options}
               onBack={() => setActivePage("overview")}
+              onViewGovDepartment={viewGovDepartment}
             />
           )}
-          {activePage === "merge" && merge && (
+          {activePage === "gov-departments" && (
+            <GovDepartmentDashboard
+              rows={allRows}
+              department={selectedGovDepartment}
+              setDepartment={(department) => {
+                setSelectedGovDepartment(department);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              year={govYear}
+              setYear={(year) => {
+                setGovYear(year);
+                setGovDistrict("all");
+              }}
+              district={govDistrict}
+              setDistrict={setGovDistrict}
+              lockedDepartment={isAdmin ? "" : session.department}
+            />
+          )}
+          {isAdmin && activePage === "merge" && merge && (
             <DatasetPage dataset={merge} rows={merge.filteredRows} title="Merge data" description="Browse privacy-safe aggregated groups from merge.csv. Search, filter and export the public summary data." summary={merge.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
           )}
-          {activePage === "palm" && palm && (
+          {isAdmin && activePage === "palm" && palm && (
             <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse privacy-safe aggregated groups from palm.csv with the same district, division, species and scheme filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
           )}
-          {activePage === "reports" && (
+          {isAdmin && activePage === "reports" && (
             <Reports
               datasets={datasets}
               rows={chartRows}
