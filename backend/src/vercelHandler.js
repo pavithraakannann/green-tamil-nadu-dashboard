@@ -27,11 +27,22 @@ export function createVercelHandler({
     fetchImpl,
     now,
   });
-  const cacheReady = dashboardService.loadCache();
+  // A failed cache read (e.g. a transient Blob network error) must not crash the
+  // function: log it, serve the request (data is re-fetched from GitHub if needed),
+  // and retry the cache read on the next request.
+  let cacheReady = null;
+  function ensureCacheLoaded() {
+    cacheReady ??= dashboardService.loadCache().catch((error) => {
+      console.error(`Dashboard cache load failed; will retry on next request. ${error.message}`);
+      cacheReady = null;
+    });
+    return cacheReady;
+  }
+  ensureCacheLoaded();
   const app = createApp({ dashboardService, allowedOrigins, auth: createAuth({ env }) });
 
   return async function handler(request, response) {
-    await cacheReady;
+    await ensureCacheLoaded();
     return app(request, response);
   };
 }

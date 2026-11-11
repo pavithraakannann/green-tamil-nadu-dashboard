@@ -20,7 +20,9 @@ export async function login(username, password) {
     throw new Error(`The dashboard API returned an invalid response (HTTP ${response.status}).`);
   }
   if (!response.ok || typeof payload.token !== "string") {
-    throw new Error(payload.error || `Login failed (HTTP ${response.status}).`);
+    // Vercel platform errors arrive as { error: { code, message } }, not a string.
+    const apiError = typeof payload.error === "string" ? payload.error : payload.error?.message;
+    throw new Error(apiError || `Login failed (HTTP ${response.status}). Please try again.`);
   }
   return { token: payload.token, role: payload.role, department: payload.department ?? null };
 }

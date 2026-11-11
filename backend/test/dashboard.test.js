@@ -480,3 +480,28 @@ test("login fails closed when not configured and rate-limits repeated failures",
   }
   assert.equal((await auth.login({ username: "admin", password: "admin-pass-123", clientKey: "ip" }, async () => [])).status, 429);
 });
+
+test("Vercel handler survives a failed cache read and retries it on the next request", async (t) => {
+  let reads = 0;
+  const handler = createVercelHandler({
+    env: { GITHUB_OWNER: "owner", GITHUB_REPO: "private-data", GITHUB_TOKEN: "token" },
+    cacheStore: {
+      read: async () => {
+        reads += 1;
+        if (reads === 1) throw new Error("fetch failed");
+        return null;
+      },
+      write: async () => {},
+    },
+  });
+  const server = createServer(handler);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  server.listen(0);
+  await once(server, "listening");
+  const url = `http://127.0.0.1:${server.address().port}/api/health`;
+  assert.equal((await fetch(url)).status, 200);
+  assert.equal((await fetch(url)).status, 200);
+  assert.equal(reads, 2);
+});
