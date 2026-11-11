@@ -1,6 +1,5 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
   ArrowLeft,
   ArrowDown,
   ArrowDownUp,
@@ -10,6 +9,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Crosshair,
   Download,
   FileBarChart,
   FilterX,
@@ -18,17 +18,21 @@ import {
   Lock,
   LogOut,
   MapPin,
+  MapPinned,
   Menu,
   RefreshCw,
   Search,
   Sprout,
   Table2,
+  Target,
   TreePine,
   Upload,
   X,
 } from "lucide-react";
 import Papa from "papaparse";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -40,11 +44,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { login, refreshDashboardData, UnauthorizedError } from "./dataService.js";
+import { fetchMapPoints, login, refreshDashboardData, UnauthorizedError } from "./dataService.js";
+import { MapLegend, MAP_CATEGORIES, mapCategory, PlantingMap } from "./PlantingMap.jsx";
 import { circleForDivision } from "./divisionCircles.js";
 
 const NAV_ITEMS = [
   { id: "overview", label: "Overview", icon: BarChart3 },
+  { id: "planting-map", label: "Planting map", icon: MapPinned },
   { id: "merge", label: "Merge data", icon: Table2 },
   { id: "palm", label: "Palm data", icon: TreePine },
   { id: "gov-departments", label: "Govt departments", icon: Building2 },
@@ -69,6 +75,7 @@ const DEFAULT_FILTERS = {
 };
 const COLORS = ["#248451", "#69a879", "#d99545", "#5784a5", "#9d75b6", "#d16d52"];
 const ROWS_PER_PAGE = 25;
+const NUMERIC_COLUMNS = new Set(["Seedlings", "Number of Seedlings", "Record Count"]);
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v2";
 const LEGACY_DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v1";
@@ -114,6 +121,15 @@ function areaAt(dataset, row) {
 
 function filterValue(dataset, row, field) {
   return field === "Species" ? speciesAt(dataset, row) : valueAt(dataset, row, field);
+}
+
+const DATE_TIME_FORMAT = new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+});
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "" : DATE_TIME_FORMAT.format(date);
 }
 
 function formatNumber(value) {
@@ -433,7 +449,7 @@ function LoadingScreen({ progress, error, onRetry }) {
 function StatCard({ title, value, note, icon: Icon, tone = "green", onClick }) {
   return (
     <article
-      className={`stat-card ${onClick ? "stat-card-clickable" : ""}`}
+      className={`stat-card stat-tone-${tone} ${onClick ? "stat-card-clickable" : ""}`}
       onClick={onClick}
       onKeyDown={onClick ? (event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -450,7 +466,7 @@ function StatCard({ title, value, note, icon: Icon, tone = "green", onClick }) {
         <strong>{value}</strong>
         <span className="stat-note">{note}</span>
       </div>
-      <Activity className="stat-spark" size={30} />
+      {onClick && <ChevronRight className="stat-go" size={18} />}
     </article>
   );
 }
@@ -506,7 +522,6 @@ function ChartCard({ title, subtitle, children, className = "" }) {
     <article className={`chart-card ${className}`}>
       <div className="chart-heading">
         <div><h2>{title}</h2><p>{subtitle}</p></div>
-        <span className="chart-menu"><ArrowDownUp size={15} /></span>
       </div>
       {children}
     </article>
@@ -574,21 +589,21 @@ function DivisionDetails({ division, rows, onBack }) {
         </div>
         <div className="table-scroll">
           <table>
-            <thead><tr><th>Species</th><th>Scheme</th><th>Seedlings reported</th><th>Planting records</th></tr></thead>
+            <thead><tr><th>Species</th><th>Scheme</th><th className="num">Seedlings reported</th><th className="num">Planting records</th></tr></thead>
             <tbody>
               {groups.map((group) => (
                 <tr key={`${group.species}-${group.scheme}`}>
                   <td>{group.species}</td>
                   <td>{group.scheme}</td>
-                  <td>{formatNumber(group.seedlings)}</td>
-                  <td>{formatNumber(group.records)}</td>
+                  <td className="num strong">{formatNumber(group.seedlings)}</td>
+                  <td className="num">{formatNumber(group.records)}</td>
                 </tr>
               ))}
               {!groups.length && (
                 <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No planting records found</strong><span>Change the dashboard filters and try again.</span></td></tr>
               )}
               {groups.length > 0 && (
-                <tr className="totals-row"><td colSpan={2}>Total</td><td>{formatNumber(totalSeedlings)}</td><td>{formatNumber(rows.reduce((total, item) => total + recordCountAt(item.dataset, item.row), 0))}</td></tr>
+                <tr className="totals-row"><td colSpan={2}>Total</td><td className="num">{formatNumber(totalSeedlings)}</td><td className="num">{formatNumber(rows.reduce((total, item) => total + recordCountAt(item.dataset, item.row), 0))}</td></tr>
               )}
             </tbody>
           </table>
@@ -600,6 +615,24 @@ function DivisionDetails({ division, rows, onBack }) {
 
 function govDepartmentAt(dataset, row) {
   return dataset.source === "palm" ? "" : valueAt(dataset, row, "Gov Department Type");
+}
+
+function RankBadge({ index }) {
+  return <span className={`rank-cell ${index < 3 ? `rank-top rank-${index + 1}` : ""}`}>{index + 1}</span>;
+}
+
+// Percent shows the share of the total; the bar is scaled to the largest row so small shares stay visible.
+function ShareCell({ value, total, max }) {
+  const percent = total ? (value / total) * 100 : 0;
+  const barPercent = max ? (value / max) * 100 : percent;
+  return (
+    <td className="num share-cell">
+      <div className="share-wrap">
+        <div className="share-bar"><span style={{ width: `${Math.max(barPercent, barPercent > 0 ? 2 : 0)}%` }} /></div>
+        <em>{total ? `${percent.toFixed(1)}%` : "-"}</em>
+      </div>
+    </td>
+  );
 }
 
 function AbstractTable({ title, subtitle, label, groups, onSelect }) {
@@ -614,7 +647,7 @@ function AbstractTable({ title, subtitle, label, groups, onSelect }) {
       </div>
       <div className="table-scroll">
         <table>
-          <thead><tr><th>{label}</th><th>Planting records</th><th>Seedlings reported</th><th>Share of seedlings</th></tr></thead>
+          <thead><tr><th>{label}</th><th className="num">Planting records</th><th className="num">Seedlings reported</th><th className="num">Share of seedlings</th></tr></thead>
           <tbody>
             {groups.map((group, index) => (
               <tr
@@ -623,17 +656,17 @@ function AbstractTable({ title, subtitle, label, groups, onSelect }) {
                 onClick={onSelect ? () => onSelect(group.name) : undefined}
                 title={onSelect ? `View ${group.name} dashboard` : undefined}
               >
-                <td><span className="rank-cell">{String(index + 1).padStart(2, "0")}</span>{group.name}</td>
-                <td>{formatNumber(group.records)}</td>
-                <td>{formatNumber(group.seedlings)}</td>
-                <td>{totalSeedlings ? `${((group.seedlings / totalSeedlings) * 100).toFixed(1)}%` : "-"}</td>
+                <td><div className="name-cell"><RankBadge index={index} /><span>{group.name}</span></div></td>
+                <td className="num">{formatNumber(group.records)}</td>
+                <td className="num strong">{formatNumber(group.seedlings)}</td>
+                <ShareCell value={group.seedlings} total={totalSeedlings} max={groups[0]?.seedlings} />
               </tr>
             ))}
             {!groups.length && (
               <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No data found</strong><span>Change the filters and try again.</span></td></tr>
             )}
             {groups.length > 0 && (
-              <tr className="totals-row"><td>Total</td><td>{formatNumber(totalRecords)}</td><td>{formatNumber(totalSeedlings)}</td><td>100%</td></tr>
+              <tr className="totals-row"><td>Total</td><td className="num">{formatNumber(totalRecords)}</td><td className="num">{formatNumber(totalSeedlings)}</td><td className="num">100%</td></tr>
             )}
           </tbody>
         </table>
@@ -642,14 +675,32 @@ function AbstractTable({ title, subtitle, label, groups, onSelect }) {
   );
 }
 
-function SimpleBarChart({ data, dataKey, label, color, height = 280 }) {
+function shortLabel(value, max = 16) {
+  const text = String(value ?? "");
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+function SimpleBarChart({ data, dataKey, label, color, height = 280, horizontal = false }) {
   if (!data.length) return <EmptyChart />;
+  if (horizontal) {
+    return (
+      <ResponsiveContainer width="100%" height={Math.max(height, data.length * 34 + 20)}>
+        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 8 }}>
+          <CartesianGrid stroke="#edf1ed" horizontal={false} />
+          <XAxis type="number" tickFormatter={(value) => compactFormat.format(value)} tick={{ fontSize: 11, fill: "#849087" }} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" width={250} tickFormatter={(value) => shortLabel(value, 30)} tick={{ fontSize: 11.5, fill: "#4a5d50" }} axisLine={false} tickLine={false} />
+          <Tooltip formatter={(value) => [formatNumber(value), label]} cursor={{ fill: "#f2f7f2" }} />
+          <Bar dataKey={dataKey} fill={color} radius={[0, 6, 6, 0]} maxBarSize={22} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 8, right: 12, bottom: 42, left: 0 }}>
+      <BarChart data={data} margin={{ top: 8, right: 12, bottom: 42, left: 14 }}>
         <CartesianGrid stroke="#edf1ed" vertical={false} />
-        <XAxis dataKey="name" angle={-30} textAnchor="end" interval={0} height={70} tick={{ fontSize: 10, fill: "#718074" }} axisLine={false} tickLine={false} />
-        <YAxis tickFormatter={(value) => compactFormat.format(value)} tick={{ fontSize: 10, fill: "#849087" }} axisLine={false} tickLine={false} width={45} />
+        <XAxis dataKey="name" angle={-30} textAnchor="end" interval={0} height={74} tickFormatter={(value) => shortLabel(value)} tick={{ fontSize: 11, fill: "#5f6f64" }} axisLine={false} tickLine={false} />
+        <YAxis tickFormatter={(value) => compactFormat.format(value)} tick={{ fontSize: 11, fill: "#849087" }} axisLine={false} tickLine={false} width={45} />
         <Tooltip formatter={(value) => [formatNumber(value), label]} cursor={{ fill: "#f2f7f2" }} />
         <Bar dataKey={dataKey} fill={color} radius={[5, 5, 0, 0]} maxBarSize={38} />
       </BarChart>
@@ -657,7 +708,305 @@ function SimpleBarChart({ data, dataKey, label, color, height = 280 }) {
   );
 }
 
-function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, lockedDepartment = "" }) {
+const MONTH_LABEL = new Intl.DateTimeFormat("en", { month: "short", year: "numeric", timeZone: "UTC" });
+
+/** Seedlings per calendar month (from the Date field), oldest first, limited to the latest `limit` months. */
+function monthlyTrend(datasetRows, limit = 12) {
+  const months = new Map();
+  // Mistyped dates (e.g. year 5025) would stretch the axis; keep 2020 up to the current month.
+  const latestMonth = dateKey(new Date()).slice(0, 7);
+  for (const { dataset, row } of datasetRows) {
+    const month = valueAt(dataset, row, "Date").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month) || month < "2020-01" || month > latestMonth) continue;
+    const group = months.get(month) ?? { month, seedlings: 0, records: 0 };
+    group.seedlings += countAt(dataset, row);
+    group.records += recordCountAt(dataset, row);
+    months.set(month, group);
+  }
+  return [...months.values()]
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .slice(-limit)
+    .map((group) => ({ ...group, name: MONTH_LABEL.format(new Date(`${group.month}-01T00:00:00Z`)) }));
+}
+
+function MonthlyTrendChart({ data, color = "#278452" }) {
+  if (!data.length) return <EmptyChart text="No dated records match these filters." />;
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <AreaChart data={data} margin={{ top: 10, right: 14, bottom: 18, left: 0 }}>
+        <defs>
+          <linearGradient id={`trend-${color.slice(1)}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke="#edf1ed" vertical={false} />
+        <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#718074" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+        <YAxis tickFormatter={(value) => compactFormat.format(value)} tick={{ fontSize: 10, fill: "#849087" }} axisLine={false} tickLine={false} width={45} />
+        <Tooltip formatter={(value, name) => [formatNumber(value), name === "seedlings" ? "Seedlings" : "Records"]} />
+        <Area type="monotone" dataKey="seedlings" stroke={color} strokeWidth={2} fill={`url(#trend-${color.slice(1)})`} dot={{ r: 3, fill: color, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function RankingList({ title, groups, max, tone }) {
+  return (
+    <div className={`ranking-list ranking-${tone}`}>
+      <h3>{title}</h3>
+      {groups.length ? (
+        <ol>
+          {groups.map((group) => (
+            <li key={group.name}>
+              <div className="ranking-row"><span>{group.name}</span><strong>{formatNumber(group.seedlings)}</strong></div>
+              <div className="ranking-bar"><span style={{ width: `${max ? Math.max(2, (group.seedlings / max) * 100) : 0}%` }} /></div>
+            </li>
+          ))}
+        </ol>
+      ) : <p className="ranking-empty">No data for these filters.</p>}
+    </div>
+  );
+}
+
+/** Top and bottom performers by seedlings for a field such as District or Division. */
+function RankingCard({ rows, field, label, count = 5, className = "" }) {
+  // Names are merged case-insensitively so "Kanyakumari" and "KANYAKUMARI" rank as one.
+  const groups = useMemo(() => {
+    const merged = new Map();
+    for (const { dataset, row } of rows) {
+      const name = filterValue(dataset, row, field).trim().replace(/\s+/g, " ");
+      if (!name) continue;
+      const key = name.toLocaleUpperCase("en");
+      const group = merged.get(key) ?? { name: key, seedlings: 0 };
+      group.seedlings += countAt(dataset, row);
+      merged.set(key, group);
+    }
+    return [...merged.values()]
+      .filter((group) => group.seedlings > 0)
+      .sort((a, b) => b.seedlings - a.seedlings || a.name.localeCompare(b.name));
+  }, [rows, field]);
+  const top = groups.slice(0, count);
+  const bottom = groups.length > count ? groups.slice(-count).reverse() : [];
+  const max = groups[0]?.seedlings ?? 0;
+  return (
+    <ChartCard title={`Top and bottom ${label.toLowerCase()}s`} subtitle={`Seedlings reported · ${formatNumber(groups.length)} ${label.toLowerCase()}s ranked`} className={className}>
+      <div className="ranking-grid">
+        <RankingList title={`Top ${top.length || ""}`.trim()} groups={top} max={max} tone="top" />
+        <RankingList title={bottom.length ? `Lowest ${bottom.length}` : "Lowest"} groups={bottom} max={max} tone="bottom" />
+      </div>
+    </ChartCard>
+  );
+}
+
+function progressTone(percent) {
+  if (percent >= 100) return "done";
+  if (percent >= 50) return "mid";
+  return "low";
+}
+
+/** Forest Department district targets (uploaded on the Forest Department page) against seedlings reported. */
+function TargetProgress({ forestRows, year, onUploadTargets }) {
+  const targets = useMemo(() => loadDistrictTargets(forestRows).targetsByYear[year] ?? {}, [forestRows, year]);
+  const items = useMemo(() => {
+    const achieved = new Map();
+    for (const { dataset, row } of forestRows) {
+      if (valueAt(dataset, row, "Year") !== year) continue;
+      const key = normalizeDistrictName(valueAt(dataset, row, "District"));
+      achieved.set(key, (achieved.get(key) ?? 0) + countAt(dataset, row));
+    }
+    return Object.entries(targets)
+      .map(([key, entry]) => {
+        const done = achieved.get(key) ?? 0;
+        return { key, district: entry.district, target: entry.target, done, percent: entry.target ? (done / entry.target) * 100 : 0 };
+      })
+      .sort((a, b) => b.percent - a.percent || a.district.localeCompare(b.district));
+  }, [forestRows, targets, year]);
+  const totalTarget = items.reduce((total, item) => total + item.target, 0);
+  const totalDone = items.reduce((total, item) => total + item.done, 0);
+  const overall = totalTarget ? (totalDone / totalTarget) * 100 : 0;
+
+  return (
+    <article className="chart-card chart-wide target-progress">
+      <div className="chart-heading">
+        <div>
+          <h2>Target vs achievement · Forest Department</h2>
+          <p>{year} district targets against geotagged seedlings reported (respects the district filter).</p>
+        </div>
+        {items.length > 0 && (
+          <div className={`target-overall tone-${progressTone(overall)}`}>
+            <strong>{overall.toFixed(1)}%</strong>
+            <span>{formatNumber(totalDone)} of {formatNumber(totalTarget)}</span>
+          </div>
+        )}
+      </div>
+      {items.length ? (
+        <div className="target-list">
+          {items.map((item) => (
+            <div key={item.key} className="target-item">
+              <div className="target-row">
+                <span>{item.district}</span>
+                <span className="target-numbers">{formatNumber(item.done)} / {formatNumber(item.target)}</span>
+                <strong className={`tone-${progressTone(item.percent)}`}>{item.percent.toFixed(0)}%</strong>
+              </div>
+              <div className="target-bar"><span className={`tone-${progressTone(item.percent)}`} style={{ width: `${Math.min(100, item.percent)}%` }} /></div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-chart target-empty">
+          <Target size={24} />
+          <span>No district targets uploaded for {year}.</span>
+          {onUploadTargets && (
+            <button className="button button-outline" onClick={onUploadTargets}><Upload size={15} /> Upload targets on the Forest Department page</button>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** Map panel with its loading, error and "data not ready" states. */
+function MapPanel({ mapState, points, onRetry, height, title, subtitle, categories }) {
+  let body;
+  if (mapState.status === "loading" || mapState.status === "idle") {
+    body = <div className="empty-chart map-placeholder" style={{ height }}><LoaderCircle className="spin" size={22} /><span>Loading planting locations…</span></div>;
+  } else if (mapState.status === "error") {
+    body = (
+      <div className="empty-chart map-placeholder" style={{ height }}>
+        <MapPin size={22} /><span>{mapState.error}</span>
+        <button className="button button-outline" onClick={onRetry}><RefreshCw size={14} /> Try again</button>
+      </div>
+    );
+  } else if (!mapState.available) {
+    body = (
+      <div className="empty-chart map-placeholder" style={{ height }}>
+        <MapPin size={22} /><span>Map locations will appear after the next data sync. Click “Refresh data” at the top to sync now.</span>
+      </div>
+    );
+  } else {
+    body = (
+      <>
+        <PlantingMap points={points} height={height} />
+        <MapLegend categories={categories} />
+      </>
+    );
+  }
+  return (
+    <article className="chart-card chart-wide map-card">
+      <div className="chart-heading">
+        <div><h2>{title}</h2><p>{subtitle}</p></div>
+      </div>
+      {body}
+    </article>
+  );
+}
+
+function rowCategory(dataset, row) {
+  return mapCategory({
+    source: dataset.source,
+    department: valueAt(dataset, row, "Department"),
+    govDepartment: govDepartmentAt(dataset, row),
+  });
+}
+
+function MapPage({ rows, mapState, onRetry, isAdmin }) {
+  const [year, setYear] = useState(() => currentReportingYear());
+  const [district, setDistrict] = useState("all");
+  const [category, setCategory] = useState("all");
+  const points = mapState.points ?? [];
+  const years = useMemo(() => uniqueSorted([...points.map((point) => point.year), currentReportingYear()]), [points]);
+  const yearPoints = useMemo(
+    () => points.filter((point) => (year === "all" || point.year === year) && (category === "all" || point.category === category)),
+    [points, year, category],
+  );
+  const districts = useMemo(() => uniqueSorted(yearPoints.map((point) => point.districtKey)), [yearPoints]);
+  const filteredPoints = useMemo(
+    () => (district === "all" ? yearPoints : yearPoints.filter((point) => point.districtKey === district)),
+    [yearPoints, district],
+  );
+  const mappedSeedlings = filteredPoints.reduce((total, point) => total + point.seedlings, 0);
+  const mappedRecords = filteredPoints.reduce((total, point) => total + point.records, 0);
+  const totalRecords = useMemo(() => rows.reduce((total, { dataset, row }) => (
+    (year === "all" || valueAt(dataset, row, "Year") === year)
+    && (district === "all" || valueAt(dataset, row, "District").trim().replace(/\s+/g, " ").toLocaleUpperCase("en") === district)
+    && (category === "all" || rowCategory(dataset, row) === category)
+      ? total + recordCountAt(dataset, row)
+      : total
+  ), 0), [rows, year, district, category]);
+  const coverage = totalRecords ? Math.min(100, (mappedRecords / totalRecords) * 100) : 0;
+  const categories = isAdmin ? MAP_CATEGORIES : MAP_CATEGORIES.filter((item) => item.id !== "palm");
+  const topDistricts = useMemo(() => {
+    const groups = new Map();
+    for (const point of filteredPoints) groups.set(point.districtKey, (groups.get(point.districtKey) ?? 0) + point.seedlings);
+    return [...groups].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [filteredPoints]);
+
+  return (
+    <>
+      <SectionHeading
+        eyebrow="Geotagged planting"
+        title="Planting map"
+        description="Every geotagged planting location on the map. Clusters show total seedlings; zoom in or click a cluster to see individual sites."
+      />
+      <div className="report-controls gov-department-filter">
+        <label className="report-selector" htmlFor="map-year-select">
+          <span>Year</span>
+          <span className="select-wrap report-select">
+            <select id="map-year-select" value={year} onChange={(event) => { setYear(event.target.value); setDistrict("all"); }}>
+              <option value="all">All years</option>
+              {years.map((option) => (
+                <option key={option} value={option}>{option === currentReportingYear() ? `${option} (current year)` : option}</option>
+              ))}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        <label className="report-selector" htmlFor="map-category-select">
+          <span>Planted by</span>
+          <span className="select-wrap report-select">
+            <select id="map-category-select" value={category} onChange={(event) => { setCategory(event.target.value); setDistrict("all"); }}>
+              <option value="all">Everyone</option>
+              {categories.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        <label className="report-selector" htmlFor="map-district-select">
+          <span>District</span>
+          <span className="select-wrap report-select">
+            <select id="map-district-select" value={district} onChange={(event) => setDistrict(event.target.value)}>
+              <option value="all">All districts</option>
+              {districts.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+      </div>
+      <div className="stat-grid">
+        <StatCard title="Mapped locations" value={formatNumber(filteredPoints.length)} note="Distinct GPS spots (≈11 m)" icon={MapPinned} />
+        <StatCard title="Seedlings mapped" value={formatNumber(mappedSeedlings)} note="With a valid GPS location" icon={Sprout} tone="mint" />
+        <StatCard title="Records with GPS" value={formatNumber(mappedRecords)} note={`of ${formatNumber(totalRecords)} records`} icon={FileBarChart} tone="gold" />
+        <StatCard title="GPS coverage" value={`${coverage.toFixed(1)}%`} note="Records that can be mapped" icon={Crosshair} tone="blue" />
+      </div>
+      <div className="charts-grid">
+        <MapPanel
+          mapState={mapState}
+          points={filteredPoints}
+          onRetry={onRetry}
+          height={560}
+          title="Planting locations"
+          subtitle="Click a dot for district, division, year, seedlings and a Google Maps link."
+          categories={categories}
+        />
+        <ChartCard title="Mapped seedlings by district" subtitle="Top 8 districts in the current map view" className="chart-wide">
+          <SimpleBarChart data={topDistricts.map(([name, seedlings]) => ({ name, seedlings }))} dataKey="seedlings" label="Seedlings" color="#278452" height={260} />
+        </ChartCard>
+      </div>
+    </>
+  );
+}
+
+function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, lockedDepartment = "", mapState, onRetryMap }) {
   const department = lockedDepartment ? "all" : selectedDepartment;
   const allGovRows = useMemo(
     () => rows.filter(({ dataset, row }) => govDepartmentAt(dataset, row)),
@@ -699,8 +1048,16 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
     [selectedRows],
   );
   const bySpecies = useMemo(() => groupData(selectedRows, "Species", "seedlings"), [selectedRows]);
+  const byMonth = useMemo(() => monthlyTrend(selectedRows), [selectedRows]);
   const isAll = department === "all" && !lockedDepartment;
   const departmentTitle = lockedDepartment || department;
+  const departmentPoints = useMemo(() => (mapState?.points ?? []).filter((point) => (
+    point.category === "gov"
+    && (year === "all" || point.year === year)
+    && (district === "all" || point.districtKey === district.trim().replace(/\s+/g, " ").toLocaleUpperCase("en"))
+    && (department === "all" || point.govDepartment === department)
+  )), [mapState?.points, year, district, department]);
+  const departmentMapSeedlings = departmentPoints.reduce((total, point) => total + point.seedlings, 0);
 
   function downloadAbstract() {
     const groups = isAll ? departments : byDistrict;
@@ -777,7 +1134,7 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
       <div className="charts-grid">
         {isAll && (
           <ChartCard title="Seedlings by department" subtitle="Seedlings reported · top 10 departments" className="chart-wide">
-            <SimpleBarChart data={departments.slice(0, 10)} dataKey="seedlings" label="Seedlings" color="#278452" height={320} />
+            <SimpleBarChart data={departments.slice(0, 10)} dataKey="seedlings" label="Seedlings" color="#278452" height={320} horizontal />
           </ChartCard>
         )}
         <ChartCard title="Seedlings by district" subtitle="Seedlings reported · top 12 districts" className={isAll ? "" : "chart-wide"}>
@@ -789,6 +1146,22 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
         <ChartCard title="Top species" subtitle="Seedlings reported · top 8 species">
           <SimpleBarChart data={bySpecies.slice(0, 8)} dataKey="seedlings" label="Seedlings" color="#d99848" />
         </ChartCard>
+        <ChartCard title="Monthly trend" subtitle={`Seedlings reported per month · ${yearLabel}${byMonth.length === 12 ? " · latest 12 months" : ""}`} className={isAll ? "" : "chart-wide"}>
+          <MonthlyTrendChart data={byMonth} />
+        </ChartCard>
+        {isAll && <RankingCard rows={selectedRows} field="District" label="District" className="chart-wide" />}
+        {mapState && (
+          <MapPanel
+            mapState={mapState}
+            points={departmentPoints}
+            onRetry={onRetryMap}
+            height={460}
+            title="Planting locations"
+            subtitle={`${formatNumber(departmentPoints.length)} GPS locations · ${formatNumber(departmentMapSeedlings)} seedlings · ${isAll ? "all government departments" : departmentTitle}`}
+            categories={MAP_CATEGORIES.filter((item) => item.id === "gov")}
+          />
+        )}
+        {!isAll && <RankingCard rows={selectedRows} field="District" label="District" className="chart-wide" />}
       </div>
       <div className="gov-abstract-tables">
         {isAll ? (
@@ -835,7 +1208,7 @@ function DepartmentBreakdown({ rows, field, title, onSelect }) {
     </div>
     <div className="table-scroll">
       <table>
-        <thead><tr><th>{title}</th><th>Seedlings reported</th></tr></thead>
+        <thead><tr><th>{title}</th><th className="num">Seedlings reported</th></tr></thead>
         <tbody>
           {grouped.map((group) => (
             <tr
@@ -844,14 +1217,14 @@ function DepartmentBreakdown({ rows, field, title, onSelect }) {
               onClick={onSelect && group.name !== "Others" ? () => onSelect(group.name) : undefined}
             >
               <td>{group.name}</td>
-              <td>{formatNumber(group.seedlings)}</td>
+              <td className="num strong">{formatNumber(group.seedlings)}</td>
             </tr>
           ))}
           {!grouped.length && (
             <tr><td className="table-empty" colSpan={2}><Sprout size={23} /><strong>No {title.toLowerCase()} data found</strong><span>Change the filters and try again.</span></td></tr>
           )}
           {grouped.length > 0 && (
-            <tr className="totals-row"><td>Total seedlings</td><td>{formatNumber(totalSeedlings)}</td></tr>
+            <tr className="totals-row"><td>Total seedlings</td><td className="num">{formatNumber(totalSeedlings)}</td></tr>
           )}
           </tbody>
         </table>
@@ -901,7 +1274,7 @@ function ForestLocationTable({ rows, selectedYear, targetsByDistrict, circle, di
       <div className="table-scroll">
         <table>
           <thead>
-            <tr><th>Circle</th><th>District</th><th>Seedlings reported</th><th>Target</th></tr>
+            <tr><th>Circle</th><th>District</th><th className="num">Seedlings reported</th><th className="num">Target</th></tr>
           </thead>
           <tbody>
             {grouped.map((group) => {
@@ -911,8 +1284,8 @@ function ForestLocationTable({ rows, selectedYear, targetsByDistrict, circle, di
                 <tr key={`${group.circle}-${group.district}`}>
                   <td>{group.circle}</td>
                   <td>{group.district}</td>
-                  <td>{group.seedlings === null ? "-" : formatNumber(group.seedlings)}</td>
-                  <td>{selectedYear === "all"
+                  <td className="num strong">{group.seedlings === null ? "-" : formatNumber(group.seedlings)}</td>
+                  <td className="num">{selectedYear === "all"
                     ? "Select a year"
                     : target === undefined ? "-" : formatNumber(target.target)}</td>
                 </tr>
@@ -922,7 +1295,7 @@ function ForestLocationTable({ rows, selectedYear, targetsByDistrict, circle, di
               <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No location data found</strong><span>Change the filters and try again.</span></td></tr>
             )}
             {hasSeedlingRows && (
-              <tr className="totals-row"><td colSpan={2}>Total seedlings</td><td>{formatNumber(totalSeedlings)}</td><td>—</td></tr>
+              <tr className="totals-row"><td colSpan={2}>Total seedlings</td><td className="num">{formatNumber(totalSeedlings)}</td><td className="num">—</td></tr>
             )}
           </tbody>
         </table>
@@ -1284,6 +1657,8 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
   const divisions = groupData(chartRows, "Division", "records").slice(0, 8);
   const species = groupData(chartRows, "Species", "seedlings").slice(0, 7);
   const schemes = groupData(chartRows, "Scheme", "records").slice(0, 6);
+  const trend = useMemo(() => monthlyTrend(nonPalmRows), [chartRows]);
+  const targetYear = filters.Year !== "all" ? filters.Year : reportingYear;
   const sources = datasets.map((dataset) => ({
     name: dataset.source === "merge" ? "Merge data" : "Palm data",
     value: dataset.rows
@@ -1314,6 +1689,18 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
         <StatCard title="Forest Department" value={formatNumber(forestSeedlings)} note="Geotagged seedlings · view details" icon={TreePine} tone="mint" onClick={onViewForestDepartment} />
         <StatCard title="Other departments" value={formatNumber(otherDepartmentSeedlings)} note="All non-forest geotagged records · view details" icon={Sprout} tone="gold" onClick={onViewOtherDepartments} />
         <StatCard title="Palm seedlings" value={formatNumber(palmSummary.seedlings)} note="Palm data only · view details" icon={TreePine} tone="blue" onClick={onViewPalmDetails} />
+      </div>
+      <div className="stat-group-heading">
+        <h2>Progress and trends</h2>
+        <p>Monthly planting, Forest Department targets and the strongest and weakest areas for the current filters.</p>
+      </div>
+      <div className="charts-grid overview-insights">
+        <ChartCard title="Monthly trend" subtitle={`Geotagged seedlings per month · excludes palm${trend.length === 12 ? " · latest 12 months" : ""}`} className="chart-wide">
+          <MonthlyTrendChart data={trend} />
+        </ChartCard>
+        <TargetProgress forestRows={forestRows} year={targetYear} onUploadTargets={onViewForestDepartment} />
+        <RankingCard rows={nonPalmRows} field="District" label="District" />
+        <RankingCard rows={nonPalmRows} field="Division" label="Division" />
       </div>
       <div className="charts-grid">
         <ChartCard title="Planting by district" subtitle="Seedlings reported · top 9 districts" className="chart-wide">
@@ -1402,7 +1789,7 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
       <section className="source-strip">
         <div><span className="source-dot" /><strong>Sources</strong><span>Statistics use aggregated groups; source records and private columns are not sent to the browser.</span></div>
         <div className="source-files">{datasets.map((dataset) => <span key={dataset.source}>{dataset.fileName} <b>{formatNumber(dataset.rows.length)}</b> groups</span>)}</div>
-        <small>Target and achievement fields are not present in the supplied files.</small>
+        <small>Targets come from the district target file uploaded on the Forest Department page.</small>
       </section>
     </>
   );
@@ -1478,7 +1865,7 @@ function DataTable({ dataset, rows }) {
         <table>
           <thead>
             <tr>{columns.map((column) => (
-              <th key={column}>
+              <th key={column} className={`${NUMERIC_COLUMNS.has(column) ? "num" : ""} ${sort?.column === column ? "sorted" : ""}`}>
                 <button onClick={() => toggleSort(column)} title={`Sort by ${column}`}>
                   {column}
                   {sort?.column === column
@@ -1495,7 +1882,12 @@ function DataTable({ dataset, rows }) {
                   const value = column === "Seedlings"
                     ? valueAt(dataset, row, "Seedlings") || valueAt(dataset, row, "Number of Seedlings")
                     : valueAt(dataset, row, column);
-                  return <td key={column} title={value}>{value || <span className="cell-empty">—</span>}</td>;
+                  if (!value) return <td key={column}><span className="cell-empty">—</span></td>;
+                  if (NUMERIC_COLUMNS.has(column) && Number.isFinite(Number(value))) {
+                    return <td key={column} className={`num ${column === "Seedlings" ? "strong" : ""}`} title={value}>{formatNumber(Number(value))}</td>;
+                  }
+                  if (column === "Year") return <td key={column} title={value}><span className="year-pill">{value}</span></td>;
+                  return <td key={column} title={value}>{value}</td>;
                 })}
               </tr>
             ))}
@@ -1544,24 +1936,82 @@ function DatasetPage({ dataset, rows, title, description, summary, options, filt
   );
 }
 
-function Reports({ datasets, rows, summary, options, filters, setFilters, onClear }) {
+const REPORT_COLUMNS = [
+  { key: "forest", label: "Forest Department" },
+  { key: "other", label: "Other departments" },
+  { key: "palmForest", label: "Forest" },
+  { key: "palmDepartments", label: "Departments" },
+];
+
+/** Which report column a row's seedlings belong to: merge is split Forest / other, palm is split Forest / departments. */
+function reportBucket(dataset, row) {
+  if (dataset.source === "palm") {
+    return valueAt(dataset, row, "Department Type").toLocaleLowerCase() === "forest department" ? "palmForest" : "palmDepartments";
+  }
+  return valueAt(dataset, row, "Department").toLocaleLowerCase() === "forest department" ? "forest" : "other";
+}
+
+const REPORT_GROUPS = [...FILTER_FIELDS, "Department"];
+
+/** The most specific department for a row: the government department if set, else Forest/Coastal/NGO/Trust etc. */
+function departmentName(dataset, row) {
+  const gov = valueAt(dataset, row, "Gov Department Type");
+  if (gov) return gov;
+  const department = dataset.source === "palm" ? "" : valueAt(dataset, row, "Department");
+  if (department && department.toLocaleLowerCase() !== "other department") return department;
+  return valueAt(dataset, row, "Department Type") || department || "Not specified";
+}
+
+function reportName(dataset, row, field) {
+  return field === "Department" ? departmentName(dataset, row) : filterValue(dataset, row, field);
+}
+
+function Reports({ rows, options, filters, setFilters, onClear }) {
   const [reportField, setReportField] = useState("District");
-  const grouped = useMemo(() => groupData(rows, reportField, "seedlings"), [rows, reportField]);
-  const reportRows = grouped.map((item) => [item.name, item.records, item.seedlings]);
-  const reportDataset = useMemo(() => ({
-    source: "report",
-    fileName: "green-tamil-nadu-report.csv",
-    headers: [reportField, "Records", "Seedlings reported"],
-    rows: reportRows,
-  }), [reportField, reportRows]);
-  const downloadReport = () => downloadCsv(reportDataset, reportRows, `${reportField.toLowerCase()}-report`);
+  const { grouped, totals } = useMemo(() => {
+    const groups = new Map();
+    const sums = { forest: 0, other: 0, palmForest: 0, palmDepartments: 0, total: 0 };
+    for (const { dataset, row } of rows) {
+      const name = reportName(dataset, row, reportField).trim().replace(/\s+/g, " ");
+      if (!name) continue;
+      const seedlings = countAt(dataset, row);
+      const bucket = reportBucket(dataset, row);
+      // Department names are merged case-insensitively ("Police" and "POLICE" are one row).
+      const key = reportField === "Department" ? name.toLocaleUpperCase("en") : name;
+      const group = groups.get(key) ?? { name, forest: 0, other: 0, palmForest: 0, palmDepartments: 0, total: 0 };
+      group[bucket] += seedlings;
+      group.total += seedlings;
+      sums[bucket] += seedlings;
+      sums.total += seedlings;
+      groups.set(key, group);
+    }
+    return {
+      grouped: [...groups.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
+      totals: sums,
+    };
+  }, [rows, reportField]);
+
+  function downloadReport() {
+    const headers = [
+      reportField, "Forest Department seedlings", "Other departments seedlings",
+      "Palm - Forest seedlings", "Palm - Departments seedlings", "Total seedlings", "Share of seedlings (%)",
+    ];
+    const reportRows = grouped.map((item) => [
+      item.name, item.forest, item.other, item.palmForest, item.palmDepartments, item.total,
+      totals.total ? ((item.total / totals.total) * 100).toFixed(2) : "0",
+    ]);
+    reportRows.push(["Total", totals.forest, totals.other, totals.palmForest, totals.palmDepartments, totals.total, "100"]);
+    downloadCsv({ source: "report", headers }, reportRows, `${reportField.toLowerCase()}-seedlings-report`);
+  }
+
+  const amount = (value) => (value ? formatNumber(value) : <span className="cell-empty">—</span>);
 
   return (
     <>
       <SectionHeading
         eyebrow="Data exports"
         title="Reports"
-        description="Explore district, circle, division, year, species and scheme summaries from the filtered records."
+        description="Seedlings by district, circle, division, year, species, scheme or department, split into Forest Department, other departments and palm."
         action={<button className="button button-primary" onClick={downloadReport}><Download size={16} /> Export report CSV</button>}
       />
       <FilterBar options={options} filters={filters} setFilters={setFilters} onClear={onClear} />
@@ -1570,28 +2020,61 @@ function Reports({ datasets, rows, summary, options, filters, setFilters, onClea
           <span>Group report by</span>
           <div className="select-wrap report-select">
             <select value={reportField} onChange={(event) => setReportField(event.target.value)}>
-              {FILTER_FIELDS.map((field) => <option key={field}>{field}</option>)}
+              {REPORT_GROUPS.map((field) => <option key={field}>{field}</option>)}
             </select>
             <ChevronDown size={14} />
           </div>
         </div>
-        <span className="report-total">{formatNumber(summary.records)} records included</span>
+        <span className="report-total">{formatNumber(totals.total)} seedlings included</span>
       </div>
-      <section className="report-table-card">
-        <div className="report-table-heading"><div><h2>{reportField} report</h2><p>Records and reported seedlings by {reportField.toLowerCase()}.</p></div><span>{formatNumber(grouped.length)} groups</span></div>
+      <section className="report-table-card seedling-report">
+        <div className="report-table-heading">
+          <div><h2>{reportField} report</h2><p>Seedlings reported by {reportField.toLowerCase()}, split by source.</p></div>
+          <span>{formatNumber(grouped.length)} groups</span>
+        </div>
         <div className="table-scroll">
           <table>
-            <thead><tr><th>{reportField}</th><th>Records</th><th>Seedlings reported</th></tr></thead>
-            <tbody>{grouped.map((item, index) => (
-              <tr key={item.name}><td><span className="rank-cell">{String(index + 1).padStart(2, "0")}</span>{item.name}</td><td>{formatNumber(item.records)}</td><td>{formatNumber(item.seedlings)}</td></tr>
-            ))}
-            {!grouped.length && <tr><td className="table-empty" colSpan={3}><Sprout size={23} /><strong>No report data</strong><span>Change the filters to see available results.</span></td></tr>}
-            {grouped.length > 0 && <tr className="totals-row"><td>Total · {datasets.length} sources</td><td>{formatNumber(summary.records)}</td><td>{formatNumber(summary.seedlings)}</td></tr>}
-          </tbody>
+            <thead>
+              <tr className="group-header">
+                <th rowSpan={2}>{reportField}</th>
+                <th colSpan={2} className="group-cell">Geotagged seedlings</th>
+                <th colSpan={2} className="group-cell group-palm">Palm seedlings</th>
+                <th rowSpan={2} className="num total-col">Total seedlings</th>
+                <th rowSpan={2} className="num">Share</th>
+              </tr>
+              <tr className="sub-header">
+                {REPORT_COLUMNS.map((column) => (
+                  <th key={column.key} className={`num ${column.key.startsWith("palm") ? "palm-col" : ""}`}>{column.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {grouped.map((item, index) => (
+                <tr key={item.name}>
+                  <td><div className="name-cell"><RankBadge index={index} /><span>{item.name}</span></div></td>
+                  {REPORT_COLUMNS.map((column) => (
+                    <td key={column.key} className={`num ${column.key.startsWith("palm") ? "palm-col" : ""}`}>{amount(item[column.key])}</td>
+                  ))}
+                  <td className="num strong total-col">{formatNumber(item.total)}</td>
+                  <ShareCell value={item.total} total={totals.total} max={grouped[0]?.total} />
+                </tr>
+              ))}
+              {!grouped.length && (
+                <tr><td className="table-empty" colSpan={7}><Sprout size={23} /><strong>No report data</strong><span>Change the filters to see available results.</span></td></tr>
+              )}
+              {grouped.length > 0 && (
+                <tr className="totals-row">
+                  <td>Total</td>
+                  {REPORT_COLUMNS.map((column) => <td key={column.key} className="num">{formatNumber(totals[column.key])}</td>)}
+                  <td className="num total-col">{formatNumber(totals.total)}</td>
+                  <td className="num">100%</td>
+                </tr>
+              )}
+            </tbody>
           </table>
         </div>
       </section>
-      <div className="report-note"><Leaf size={16} /><span>Summary metrics use the available planting count field for each record. No target or achievement fields exist in the supplied CSV files.</span></div>
+      <div className="report-note"><Leaf size={16} /><span>Geotagged “Other departments” and Palm “Departments” include government departments, NGOs, trusts and others. Palm “Forest” is palm planted by the Forest Department.</span></div>
     </>
   );
 }
@@ -1636,6 +2119,7 @@ function Dashboard({ session, onLogout }) {
   const [syncWarning, setSyncWarning] = useState("");
   const [error, setError] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mapState, setMapState] = useState({ status: "idle", points: [], available: true, error: "" });
   const hasDataRef = useRef(false);
   const syncInProgressRef = useRef(false);
 
@@ -1657,6 +2141,12 @@ function Dashboard({ session, onLogout }) {
       setLastSyncedAt(loaded.lastSyncedAt ?? "");
       setSourceUpdatedAt(loaded.sourceUpdatedAt ?? "");
       setSyncWarning(loaded.warning);
+      // Reload map points after a manual refresh, or when the old cache had no map data yet.
+      setMapState((current) => (
+        current.status === "ready" && (forceRefresh || !current.available)
+          ? { status: "idle", points: [], available: true, error: "" }
+          : current
+      ));
     } catch (loadError) {
       if (loadError instanceof UnauthorizedError) {
         onLogout(loadError.message);
@@ -1684,6 +2174,29 @@ function Dashboard({ session, onLogout }) {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, []);
+
+  async function loadMapPoints() {
+    setMapState({ status: "loading", points: [], available: true, error: "" });
+    try {
+      const { points, available } = await fetchMapPoints(session.token);
+      for (const point of points) {
+        point.category = mapCategory(point);
+        point.districtKey = point.district.trim().replace(/\s+/g, " ").toLocaleUpperCase("en");
+      }
+      setMapState({ status: "ready", points, available, error: "" });
+    } catch (mapError) {
+      if (mapError instanceof UnauthorizedError) {
+        onLogout(mapError.message);
+        return;
+      }
+      setMapState({ status: "error", points: [], available: true, error: mapError.message || "Map data could not be loaded." });
+    }
+  }
+
+  const pageNeedsMap = activePage === "planting-map" || activePage === "gov-departments";
+  useEffect(() => {
+    if (pageNeedsMap && !loading && mapState.status === "idle") loadMapPoints();
+  }, [pageNeedsMap, loading, mapState.status]);
 
   const options = useMemo(() => {
     const values = Object.fromEntries(FILTER_FIELDS.map((field) => [field, new Set()]));
@@ -1789,9 +2302,15 @@ function Dashboard({ session, onLogout }) {
             <div className="breadcrumb"><span>Green Tamil Nadu</span><span className="crumb-slash">/</span><strong>{activePage === "division-details" ? selectedDivision : activePage === "other-department-details" ? "Other departments" : activePage === "forest-department-details" ? "Forest Department" : activePage === "palm-details" ? "Palm seedlings" : navItems.find((item) => item.id === activePage)?.label}</strong></div>
           </div>
           <div className="topbar-right">
-            <span className="topbar-source"><span /> Private GitHub data</span>
-            {lastSyncedAt && <span className="sync-time">Synced {new Date(lastSyncedAt).toLocaleString()}</span>}
-            {sourceUpdatedAt && <span className="sync-time">Source updated {new Date(sourceUpdatedAt).toLocaleString()}</span>}
+            {(sourceUpdatedAt || lastSyncedAt) && (
+              <div className="data-status" title="Private GitHub data">
+                <span className="sync-dot" />
+                <div>
+                  <strong>Private data updated {formatDateTime(sourceUpdatedAt || lastSyncedAt)}</strong>
+                  {lastSyncedAt && <span>Last synced {formatDateTime(lastSyncedAt)}</span>}
+                </div>
+              </div>
+            )}
             <button className="button button-outline refresh-button" disabled={refreshing} onClick={() => loadData(true)}><RefreshCw className={refreshing ? "spin" : ""} size={15} /> {refreshing ? "Refreshing…" : "Refresh data"}</button>
             <span className="session-badge" title={isAdmin ? "Administrator" : session.department}>
               {isAdmin ? "Admin" : session.department}
@@ -1872,7 +2391,12 @@ function Dashboard({ session, onLogout }) {
               district={govDistrict}
               setDistrict={setGovDistrict}
               lockedDepartment={isAdmin ? "" : session.department}
+              mapState={mapState}
+              onRetryMap={loadMapPoints}
             />
+          )}
+          {isAdmin && activePage === "planting-map" && (
+            <MapPage rows={allRows} mapState={mapState} onRetry={loadMapPoints} isAdmin={isAdmin} />
           )}
           {isAdmin && activePage === "merge" && merge && (
             <DatasetPage dataset={merge} rows={merge.filteredRows} title="Merge data" description="Browse privacy-safe aggregated groups from merge.csv. Search, filter and export the public summary data." summary={merge.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
@@ -1882,9 +2406,7 @@ function Dashboard({ session, onLogout }) {
           )}
           {isAdmin && activePage === "reports" && (
             <Reports
-              datasets={datasets}
               rows={chartRows}
-              summary={summary}
               options={options}
               filters={filters}
               setFilters={setFilters}

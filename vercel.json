@@ -12,6 +12,9 @@
     },
     "api/login.js": {
       "maxDuration": 300
+    },
+    "api/map-points.js": {
+      "maxDuration": 300
     }
   }
 }

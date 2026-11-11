@@ -1,7 +1,7 @@
 import compression from "compression";
 import cors from "cors";
 import express from "express";
-import { createAuth, listDepartments, payloadForSession } from "./auth.js";
+import { createAuth, listDepartments, mapPointsForSession, payloadForSession } from "./auth.js";
 
 export function createApp({ dashboardService, allowedOrigins, auth = createAuth() }) {
   const app = express();
@@ -66,6 +66,15 @@ export function createApp({ dashboardService, allowedOrigins, auth = createAuth(
       response.json(payloadForSession(await dashboardService.getDashboardData(), request.session));
     } catch (error) {
       response.status(503).json({ error: error.message || "Dashboard data is unavailable." });
+    }
+  });
+
+  app.get("/api/map-points", requireSession, async (request, response) => {
+    try {
+      response.set("Cache-Control", "no-store");
+      response.json(mapPointsForSession(await dashboardService.getDashboardData(), request.session));
+    } catch (error) {
+      response.status(503).json({ error: error.message || "Map data is unavailable." });
     }
   });
 

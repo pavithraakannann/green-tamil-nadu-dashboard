@@ -38,12 +38,16 @@ export function listDepartments(payload) {
   return [...departments].sort((a, b) => a.localeCompare(b));
 }
 
-/** Returns a copy of the dashboard payload that only contains the session's permitted rows. */
+/**
+ * Returns a copy of the dashboard payload that only contains the session's permitted rows.
+ * Map points are left out here; they are served separately by mapPointsForSession.
+ */
 export function payloadForSession(payload, session) {
-  if (session.role === "admin") return payload;
+  const datasets = payload.datasets.map(({ points: _points, ...dataset }) => dataset);
+  if (session.role === "admin") return { ...payload, datasets };
   return {
     ...payload,
-    datasets: payload.datasets.map((dataset) => {
+    datasets: datasets.map((dataset) => {
       const index = dataset.headers.indexOf(GOV_DEPARTMENT_FIELD);
       if (dataset.source === "palm" || index < 0) return { ...dataset, rows: [] };
       return {
@@ -52,6 +56,39 @@ export function payloadForSession(payload, session) {
       };
     }),
   };
+}
+
+function filterPoints(points, keep) {
+  const width = points.fields.length;
+  const result = { ...points, lat: [], lon: [], seedlings: [], records: [], codes: [] };
+  for (let index = 0; index < points.lat.length; index += 1) {
+    const codes = points.codes.slice(index * width, index * width + width);
+    if (!keep(codes)) continue;
+    result.lat.push(points.lat[index]);
+    result.lon.push(points.lon[index]);
+    result.seedlings.push(points.seedlings[index]);
+    result.records.push(points.records[index]);
+    result.codes.push(...codes);
+  }
+  return result;
+}
+
+/**
+ * Map points the session may see: everything for admin, and for a department only its own
+ * merge points (never palm). `points` is null when the cache predates map support.
+ */
+export function mapPointsForSession(payload, session) {
+  const datasets = payload.datasets.map((dataset) => {
+    const points = dataset.points ?? null;
+    if (session.role === "admin" || !points) return { source: dataset.source, points };
+    const fieldIndex = points.fields.indexOf(GOV_DEPARTMENT_FIELD);
+    if (dataset.source === "palm" || fieldIndex < 0) return { source: dataset.source, points: filterPoints(points, () => false) };
+    const allowed = new Set(points.values[fieldIndex]
+      .map((value, code) => (normalizeDepartment(value) === session.department ? code : -1))
+      .filter((code) => code >= 0));
+    return { source: dataset.source, points: filterPoints(points, (codes) => allowed.has(codes[fieldIndex])) };
+  });
+  return { lastSyncedAt: payload.lastSyncedAt ?? null, datasets };
 }
 
 function parseDepartmentPasswords(value) {

@@ -27,6 +27,74 @@ export async function login(username, password) {
   return { token: payload.token, role: payload.role, department: payload.department ?? null };
 }
 
+function decodePoints(source, points) {
+  const valid = points
+    && Array.isArray(points.fields)
+    && Array.isArray(points.values)
+    && Array.isArray(points.lat)
+    && [points.lon, points.seedlings, points.records].every((list) => Array.isArray(list) && list.length === points.lat.length)
+    && Array.isArray(points.codes)
+    && points.codes.length === points.lat.length * points.fields.length;
+  if (!valid) throw new Error("The dashboard API returned invalid map data.");
+  const width = points.fields.length;
+  const fieldIndex = (name) => points.fields.indexOf(name);
+  const label = (index, offset) => (index < 0 ? "" : points.values[index][points.codes[offset + index]] ?? "");
+  const [year, district, division, department, govDepartment, departmentType] = [
+    "Year", "District", "Division", "Department", "Gov Department Type", "Department Type",
+  ].map(fieldIndex);
+  const decoded = new Array(points.lat.length);
+  for (let index = 0; index < points.lat.length; index += 1) {
+    const offset = index * width;
+    decoded[index] = {
+      source,
+      lat: points.lat[index] / points.scale,
+      lon: points.lon[index] / points.scale,
+      seedlings: points.seedlings[index],
+      records: points.records[index],
+      year: label(year, offset),
+      district: label(district, offset),
+      division: label(division, offset),
+      department: label(department, offset),
+      govDepartment: label(govDepartment, offset),
+      departmentType: label(departmentType, offset),
+    };
+  }
+  return decoded;
+}
+
+/**
+ * Loads GPS planting points for the map. Returns { points, available }, where available is
+ * false when the server cache was built before map support (a data refresh fixes that).
+ */
+export async function fetchMapPoints(token) {
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/map-points`, {
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    });
+  } catch (error) {
+    throw new Error(`Unable to connect to the dashboard API: ${error.message}`);
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`The map API returned an invalid response (HTTP ${response.status}).`);
+  }
+  if (response.status === 401) {
+    throw new UnauthorizedError(payload.error || "Your session has expired. Please log in again.");
+  }
+  if (!response.ok || !Array.isArray(payload.datasets)) {
+    const apiError = typeof payload.error === "string" ? payload.error : payload.error?.message;
+    throw new Error(apiError || `The map API returned HTTP ${response.status}.`);
+  }
+  const available = payload.datasets.some((dataset) => dataset.points);
+  const points = payload.datasets.flatMap((dataset) => (
+    dataset.points ? decodePoints(dataset.source, dataset.points) : []
+  ));
+  return { points, available };
+}
+
 async function fetchDashboardPayload(forceRefresh, token) {
   const endpoint = forceRefresh ? "/api/refresh" : "/api/dashboard-data";
   let response;

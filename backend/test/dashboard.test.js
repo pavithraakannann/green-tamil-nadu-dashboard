@@ -6,7 +6,7 @@ import { createDashboardService } from "../src/dashboardService.js";
 import { aggregateCsv, aggregateCsvStream } from "../src/csvService.js";
 import { fetchLatestRelease, fetchReleaseAssetStream } from "../src/githubService.js";
 import { createVercelHandler } from "../src/vercelHandler.js";
-import { createAuth, listDepartments, payloadForSession } from "../src/auth.js";
+import { createAuth, listDepartments, mapPointsForSession, payloadForSession } from "../src/auth.js";
 
 const TEST_AUTH_ENV = {
   AUTH_SECRET: "test-secret-that-is-at-least-32-characters-long",
@@ -504,4 +504,68 @@ test("Vercel handler survives a failed cache read and retries it on the next req
   assert.equal((await fetch(url)).status, 200);
   assert.equal((await fetch(url)).status, 200);
   assert.equal(reads, 2);
+});
+
+const MAP_CSV = [
+  "District,Year,Department,Gov Department Type,Seedlings,Latitude,Longitude,Farmer Name,Mobile",
+  "Chennai,2026-2027,Other Department,Police,10,13.08271,80.27071,A Person,9999999999",
+  "Chennai,2026-2027,Other Department,Police,5,13.08269,80.27069,B Person,8888888888",
+  "Madurai,2026-2027,Forest Department,,7,9.9252,78.1198,C Person,7777777777",
+  "Salem,2026-2027,Other Department,Rural Development and Panchayat Raj,4,11.6643,78.1460,D Person,6666666666",
+  "Erode,2026-2027,Other Department,Police,3,0,0,E Person,5555555555",
+  "Erode,2026-2027,Other Department,Police,2,,,F Person,4444444444",
+].join("\n");
+
+test("map points round to ~11 m, merge the same spot, drop bad GPS and keep no private columns", () => {
+  const result = aggregateCsv(MAP_CSV, "merge");
+  const { points } = result;
+  assert.equal(points.scale, 10000);
+  assert.deepEqual(points.fields, ["Year", "District", "Department", "Gov Department Type"]);
+  assert.equal(points.lat.length, 3);
+  assert.equal(points.excluded, 1);
+  const chennai = points.lat.indexOf(130827);
+  assert.equal(points.lon[chennai], 802707);
+  assert.equal(points.seedlings[chennai], 15);
+  assert.equal(points.records[chennai], 2);
+  assert.equal(points.codes.length, points.lat.length * points.fields.length);
+  for (const secret of ["A Person", "9999999999", "Farmer Name", "Mobile"]) {
+    assert.equal(JSON.stringify(result).includes(secret), false, secret);
+  }
+  assert.equal(aggregateCsv("District,Seedlings\nChennai,1", "merge").points, undefined);
+});
+
+test("map points are served separately and departments only get their own locations", async (t) => {
+  const payload = {
+    datasets: [aggregateCsv(MAP_CSV, "merge"), aggregateCsv("District,Seedlings,Latitude,Longitude\nChennai,3,13.1,80.2", "palm")],
+    lastSyncedAt: "2026-11-10T00:00:00.000Z",
+    warning: "",
+  };
+  assert.equal(payloadForSession(payload, { role: "admin" }).datasets.some((dataset) => dataset.points), false);
+  assert.equal(payloadForSession(payload, { role: "department", department: "POLICE" }).datasets.some((dataset) => dataset.points), false);
+
+  const police = mapPointsForSession(payload, { role: "department", department: "POLICE" });
+  const policePoints = police.datasets[0].points;
+  assert.equal(policePoints.lat.length, 1);
+  assert.equal(policePoints.seedlings[0], 15);
+  assert.equal(police.datasets[1].points.lat.length, 0);
+  assert.equal(mapPointsForSession(payload, { role: "admin" }).datasets[0].points.lat.length, 3);
+  assert.equal(mapPointsForSession({ datasets: [{ source: "merge" }] }, { role: "admin" }).datasets[0].points, null);
+
+  const dashboardService = {
+    getStatus: () => ({}),
+    getDashboardData: async () => payload,
+    forceRefresh: async () => payload,
+  };
+  const app = createApp({ dashboardService, allowedOrigins: [], auth: testAuth() });
+  const server = app.listen(0);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await once(server, "listening");
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await fetch(`${baseUrl}/api/map-points`)).status, 401);
+  const token = await loginToken(baseUrl, "police", "dept-pass-123");
+  const response = await (await fetch(`${baseUrl}/api/map-points`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  assert.equal(response.datasets[0].points.lat.length, 1);
+  assert.equal(response.datasets[1].points.lat.length, 0);
 });

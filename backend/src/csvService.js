@@ -15,6 +15,12 @@ const SAFE_DIMENSIONS = [
   "Gov Department Type",
 ];
 const SEEDLING_COLUMNS = ["Seedlings", "Number of Seedlings"];
+// Map points carry only these labels, never names, phone numbers or addresses.
+const POINT_FIELDS = ["Year", "District", "Division", "Department", "Gov Department Type", "Department Type"];
+// Coordinates are stored as integers of 1e-4 degrees (about 11 m), merging plantings at the same spot.
+const POINT_SCALE = 10_000;
+// Generous Tamil Nadu bounding box; points outside it are GPS errors.
+const POINT_BOUNDS = { minLat: 7.5, maxLat: 14, minLon: 75.5, maxLon: 81 };
 const MAX_SEEDLING_VALUE = Number.MAX_SAFE_INTEGER;
 const MAX_CSV_BYTES = 300 * 1024 * 1024;
 
@@ -43,6 +49,66 @@ function createAggregator(source) {
   let seedlingIndexes = [];
   let columnCount = 0;
   let groups = new Map();
+  let latitudeIndex;
+  let longitudeIndex;
+  let pointFields = [];
+  let pointFieldIndexes = [];
+  let pointDictionaries = [];
+  let points = new Map();
+  let pointsExcluded = 0;
+
+  function parseCoordinate(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return null;
+    const number = Number(text);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function addPoint(values, seedlings) {
+    const lat = parseCoordinate(values[latitudeIndex]);
+    const lon = parseCoordinate(values[longitudeIndex]);
+    if (lat === null || lon === null) return;
+    if (lat < POINT_BOUNDS.minLat || lat > POINT_BOUNDS.maxLat || lon < POINT_BOUNDS.minLon || lon > POINT_BOUNDS.maxLon) {
+      pointsExcluded += 1;
+      return;
+    }
+    const codes = pointFieldIndexes.map((index, fieldNumber) => {
+      const value = String(values[index] ?? "").trim();
+      const dictionary = pointDictionaries[fieldNumber];
+      let code = dictionary.get(value);
+      if (code === undefined) {
+        code = dictionary.size;
+        dictionary.set(value, code);
+      }
+      return code;
+    });
+    const latInt = Math.round(lat * POINT_SCALE);
+    const lonInt = Math.round(lon * POINT_SCALE);
+    const key = `${latInt},${lonInt},${codes.join(",")}`;
+    const point = points.get(key) ?? { lat: latInt, lon: lonInt, codes, seedlings: 0, records: 0 };
+    point.seedlings += seedlings;
+    point.records += 1;
+    points.set(key, point);
+  }
+
+  function finishPoints() {
+    if (latitudeIndex === undefined || longitudeIndex === undefined) return undefined;
+    // Sorted by latitude so the integer arrays compress well.
+    const sorted = [...points.values()].sort((a, b) => a.lat - b.lat || a.lon - b.lon);
+    const result = {
+      scale: POINT_SCALE,
+      fields: pointFields,
+      values: pointDictionaries.map((dictionary) => [...dictionary.keys()]),
+      lat: sorted.map((point) => point.lat),
+      lon: sorted.map((point) => point.lon),
+      seedlings: sorted.map((point) => point.seedlings),
+      records: sorted.map((point) => point.records),
+      codes: sorted.flatMap((point) => point.codes),
+      excluded: pointsExcluded,
+    };
+    points = new Map();
+    return result;
+  }
 
   function setHeaders(values) {
     const headers = values.map((value, index) => (
@@ -67,6 +133,11 @@ function createAggregator(source) {
     if (!dimensions.includes("District") && !dimensions.includes("Division")) {
       throw new Error(`${source}.csv does not contain a supported public location column.`);
     }
+    latitudeIndex = sourceHeaders.get("latitude");
+    longitudeIndex = sourceHeaders.get("longitude");
+    pointFields = POINT_FIELDS.filter((field) => sourceHeaders.has(field.toLocaleLowerCase()));
+    pointFieldIndexes = pointFields.map((field) => sourceHeaders.get(field.toLocaleLowerCase()));
+    pointDictionaries = pointFields.map(() => new Map());
   }
 
   function addRow(values, rowNumber) {
@@ -95,6 +166,7 @@ function createAggregator(source) {
       throw new Error(`${source}.csv totals exceed the supported numeric range near row ${rowNumber}.`);
     }
     groups.set(key, group);
+    if (latitudeIndex !== undefined && longitudeIndex !== undefined) addPoint(values, seedlings);
   }
 
   function finish() {
@@ -107,7 +179,14 @@ function createAggregator(source) {
       String(records),
     ]);
     groups = new Map();
-    return { source, fileName: `${source}.csv · aggregated`, headers, rows };
+    const mapPoints = finishPoints();
+    return {
+      source,
+      fileName: `${source}.csv · aggregated`,
+      headers,
+      rows,
+      ...(mapPoints ? { points: mapPoints } : {}),
+    };
   }
 
   return { addRow, finish };
