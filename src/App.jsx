@@ -699,7 +699,6 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
     [selectedRows],
   );
   const bySpecies = useMemo(() => groupData(selectedRows, "Species", "seedlings"), [selectedRows]);
-  const byScheme = useMemo(() => groupData(selectedRows, "Scheme", "seedlings"), [selectedRows]);
   const isAll = department === "all" && !lockedDepartment;
   const departmentTitle = lockedDepartment || department;
 
@@ -773,7 +772,7 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
         <StatCard title="Seedlings reported" value={formatNumber(selectedSummary.seedlings)} note={`${yearLabel} · ${isAll ? `${formatNumber(departments.length)} departments` : "selected department"}`} icon={Sprout} />
         <StatCard title="Planting records" value={formatNumber(selectedSummary.records)} note="Geotagged records" icon={FileBarChart} tone="mint" />
         <StatCard title="Districts covered" value={formatNumber(selectedSummary.districts)} note={`${formatNumber(selectedSummary.divisions)} divisions`} icon={MapPin} tone="gold" />
-        <StatCard title="Species planted" value={formatNumber(selectedSummary.species)} note={`${formatNumber(selectedSummary.schemes)} schemes`} icon={TreePine} tone="blue" />
+        <StatCard title="Species planted" value={formatNumber(selectedSummary.species)} note="Distinct species" icon={TreePine} tone="blue" />
       </div>
       <div className="charts-grid">
         {isAll && (
@@ -790,11 +789,6 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
         <ChartCard title="Top species" subtitle="Seedlings reported · top 8 species">
           <SimpleBarChart data={bySpecies.slice(0, 8)} dataKey="seedlings" label="Seedlings" color="#d99848" />
         </ChartCard>
-        {!isAll && (
-          <ChartCard title="Schemes" subtitle="Seedlings reported · top 6 schemes">
-            <SimpleBarChart data={byScheme.slice(0, 6)} dataKey="seedlings" label="Seedlings" color="#9d75b6" />
-          </ChartCard>
-        )}
       </div>
       <div className="gov-abstract-tables">
         {isAll ? (
