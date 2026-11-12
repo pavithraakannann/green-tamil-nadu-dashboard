@@ -1,6 +1,7 @@
 import { createApp } from "./app.js";
 import { createAuth } from "./auth.js";
 import { createDashboardService } from "./dashboardService.js";
+import { createUdhaviService } from "./udhaviService.js";
 
 export function createVercelHandler({
   env = process.env,
@@ -39,7 +40,12 @@ export function createVercelHandler({
     return cacheReady;
   }
   ensureCacheLoaded();
-  const app = createApp({ dashboardService, allowedOrigins, auth: createAuth({ env }) });
+  const app = createApp({
+    dashboardService,
+    allowedOrigins,
+    auth: createAuth({ env }),
+    udhavi: createUdhaviService({ url: env.UDHAVI_API_URL || undefined, ...(fetchImpl ? { fetchImpl } : {}) }),
+  });
 
   return async function handler(request, response) {
     await ensureCacheLoaded();

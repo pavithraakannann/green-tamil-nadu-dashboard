@@ -1,0 +1,155 @@
+{
+  "year": "2026-2027",
+  "source": "Palm target district-wise (37 districts, total 1,07,25,000)",
+  "total": 10725000,
+  "districts": [
+    {
+      "district": "Thanjavur",
+      "target": 250000
+    },
+    {
+      "district": "Pudukkottai",
+      "target": 770000
+    },
+    {
+      "district": "Tiruvannamalai",
+      "target": 400000
+    },
+    {
+      "district": "Tuticorin",
+      "target": 400000
+    },
+    {
+      "district": "Ariyalur",
+      "target": 350000
+    },
+    {
+      "district": "Ramanathapuram",
+      "target": 400000
+    },
+    {
+      "district": "Chengalpattu",
+      "target": 250000
+    },
+    {
+      "district": "Kallakurichi",
+      "target": 250000
+    },
+    {
+      "district": "Sivaganga",
+      "target": 500000
+    },
+    {
+      "district": "Erode",
+      "target": 250000
+    },
+    {
+      "district": "Tirunelveli",
+      "target": 250000
+    },
+    {
+      "district": "Salem",
+      "target": 250000
+    },
+    {
+      "district": "Villupuram",
+      "target": 300000
+    },
+    {
+      "district": "Kanchipuram",
+      "target": 285000
+    },
+    {
+      "district": "Tenkasi",
+      "target": 250000
+    },
+    {
+      "district": "Tirupathur",
+      "target": 250000
+    },
+    {
+      "district": "Madurai",
+      "target": 250000
+    },
+    {
+      "district": "Krishnagiri",
+      "target": 295000
+    },
+    {
+      "district": "Theni",
+      "target": 250000
+    },
+    {
+      "district": "Cuddalore",
+      "target": 300000
+    },
+    {
+      "district": "Dharmapuri",
+      "target": 250000
+    },
+    {
+      "district": "Ranipet",
+      "target": 300000
+    },
+    {
+      "district": "Nagapattinam",
+      "target": 300000
+    },
+    {
+      "district": "Tiruchirappalli",
+      "target": 400000
+    },
+    {
+      "district": "Mayiladuthurai",
+      "target": 300000
+    },
+    {
+      "district": "Namakkal",
+      "target": 250000
+    },
+    {
+      "district": "Karur",
+      "target": 250000
+    },
+    {
+      "district": "Chennai",
+      "target": 100000
+    },
+    {
+      "district": "Tiruppur",
+      "target": 250000
+    },
+    {
+      "district": "Vellore",
+      "target": 250000
+    },
+    {
+      "district": "Virudhunagar",
+      "target": 250000
+    },
+    {
+      "district": "Perambalur",
+      "target": 200000
+    },
+    {
+      "district": "Dindigul",
+      "target": 250000
+    },
+    {
+      "district": "Thiruvarur",
+      "target": 275000
+    },
+    {
+      "district": "Thiruvallur",
+      "target": 250000
+    },
+    {
+      "district": "Coimbatore",
+      "target": 100000
+    },
+    {
+      "district": "Kanniyakumari",
+      "target": 250000
+    }
+  ]
+}

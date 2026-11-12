@@ -569,3 +569,181 @@ test("map points are served separately and departments only get their own locati
   assert.equal(response.datasets[0].points.lat.length, 1);
   assert.equal(response.datasets[1].points.lat.length, 0);
 });
+
+test("targets: departments map to target groups, districts match by spelling, palm is excluded", async () => {
+  const { buildTargetReport, targetGroupFor } = await import("../src/targets.js");
+  const targets = {
+    year: "2026-2027",
+    sourceFile: "targets.xlsx",
+    districts: [
+      { district: "Tiiruchirappalli", targets: { "Forest Department": 100, "Rural Development & Panchayat Raj (DRDA)": 50, "Forest Department & Rural Development & Panchayat Raj (MGNREGS)": 30, "Others (NGOs, Volunteers, etc.)": 5 } },
+      { district: "Sivagangai", targets: { "Forest Department": 40 } },
+    ],
+  };
+  const payload = {
+    datasets: [{
+      source: "merge",
+      headers: ["District", "Year", "Department", "Gov Department Type", "Seedlings", "Record Count"],
+      rows: [
+        ["TRICHY", "2026-2027", "Forest Department", "", "60", "1"],
+        ["TIRUCHIRAPPALLI", "2026-2027", "Other Department", "Rural Development and Panchayat Raj", "20", "1"],
+        ["TIRUCHIRAPPALLI", "2025-2026", "Forest Department", "", "999", "1"],
+        ["TIRUCHIRAPPALLI", "2026-2027", "Other Department", "", "3", "1"],
+        ["SIVAGANGA", "2026-2027", "Forest Department", "", "10", "1"],
+        ["ATLANTIS", "2026-2027", "Forest Department", "", "7", "1"],
+      ],
+    }, {
+      source: "palm",
+      headers: ["District", "Year", "Department Type", "Seedlings", "Record Count"],
+      rows: [["TIRUCHIRAPPALLI", "2026-2027", "Forest Department", "500", "1"]],
+    }],
+  };
+
+  assert.equal(targetGroupFor({ govDepartment: "DEPARTMENT OF AGRICULTURE" }).id, "agriculture");
+  assert.equal(targetGroupFor({ govDepartment: "School Education Department" }).id, "education");
+  assert.equal(targetGroupFor({ govDepartment: "HIGHWAYS AND MINOR PORTS DEPARTMENT" }).id, "highways");
+  assert.equal(targetGroupFor({ department: "Plant-a-Tree" }).id, "others");
+
+  const admin = buildTargetReport(payload, { role: "admin" }, targets);
+  const trichy = admin.districts.find((entry) => entry.district === "Tiiruchirappalli");
+  assert.equal(trichy.targets.forest, 100);
+  assert.equal(trichy.achieved.forest, 60);
+  assert.equal(trichy.targets.rdpr, 80);
+  assert.equal(trichy.achieved.rdpr, 20);
+  assert.equal(trichy.achieved.others, 3);
+  assert.equal(admin.districts.find((entry) => entry.district === "Sivagangai").achieved.forest, 10);
+  assert.deepEqual(admin.unmatchedDistricts, [{ district: "ATLANTIS", achieved: 7 }]);
+  assert.equal(admin.govGroups["RURAL DEVELOPMENT AND PANCHAYAT RAJ"], "rdpr");
+
+  const department = buildTargetReport(
+    payloadForSession(payload, { role: "department", department: "RURAL DEVELOPMENT AND PANCHAYAT RAJ" }),
+    { role: "department", department: "RURAL DEVELOPMENT AND PANCHAYAT RAJ" },
+    targets,
+  );
+  assert.deepEqual(department.groups.map((group) => group.id), ["rdpr"]);
+  assert.deepEqual(Object.keys(department.districts[0].targets), ["rdpr"]);
+  assert.equal(department.districts[0].achieved.rdpr, 20);
+});
+
+test("dashboard API includes the session's target report", async (t) => {
+  const dashboardService = {
+    getStatus: () => ({}),
+    getDashboardData: async () => departmentFixture(),
+    forceRefresh: async () => departmentFixture(),
+  };
+  const app = createApp({ dashboardService, allowedOrigins: [], auth: testAuth() });
+  const server = app.listen(0);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await once(server, "listening");
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const adminToken = await loginToken(baseUrl, "admin", "admin-pass-123");
+  const adminPayload = await (await fetch(`${baseUrl}/api/dashboard-data`, { headers: { Authorization: `Bearer ${adminToken}` } })).json();
+  assert.equal(adminPayload.targets.year, "2026-2027");
+  assert.ok(adminPayload.targets.groups.length > 20);
+  const policeToken = await loginToken(baseUrl, "POLICE", "dept-pass-123");
+  const policePayload = await (await fetch(`${baseUrl}/api/dashboard-data`, { headers: { Authorization: `Bearer ${policeToken}` } })).json();
+  assert.deepEqual(policePayload.targets.groups.map((group) => group.id), ["police"]);
+});
+
+test("palm targets: district aliases match, forest and departments split, admin only", async () => {
+  const { buildPalmTargetReport } = await import("../src/targets.js");
+  const targets = { year: "2026-2027", districts: [{ district: "Tuticorin", target: 1000 }, { district: "Tiruchirappalli", target: 500 }] };
+  const payload = {
+    datasets: [
+      { source: "merge", headers: ["Year", "District", "Seedlings"], rows: [["2026-2027", "TUTICORIN", 999]] },
+      {
+        source: "palm",
+        headers: ["District", "Year", "Department Type", "Seedlings"],
+        rows: [
+          ["TUTICORIN", "2026-2027", "Forest Department", 300],
+          ["THOOTHUKUDI", "2026-2027", "Govt Department", 100],
+          ["TIRUCHIRAPPALLI", "2026-2027", "NGO", 50],
+          ["TUTICORIN", "2025-2026", "Forest Department", 7000],
+          ["THE NILGIRIS", "2026-2027", "Forest Department", 20],
+        ],
+      },
+    ],
+  };
+  const report = buildPalmTargetReport(payload, { role: "admin" }, targets);
+  assert.equal(report.year, "2026-2027");
+  assert.deepEqual(report.districts.map(({ district, target, forest, departments }) => [district, target, forest, departments]), [
+    ["Tuticorin", 1000, 300, 100],
+    ["Tiruchirappalli", 500, 0, 50],
+    ["THE NILGIRIS", 0, 20, 0],
+  ]);
+  assert.equal(buildPalmTargetReport(payload, { role: "department", department: "POLICE" }, targets), null);
+});
+
+test("Udhavi: district seeds are parsed, cached, refreshed on force and kept when the API fails", async () => {
+  const { createUdhaviService } = await import("../src/udhaviService.js");
+  let calls = 0;
+  let fail = false;
+  let clock = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (fail) return { ok: false, status: 500, json: async () => ({}) };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        generatedAt: "2026-11-11T09:49:28.969Z",
+        year: 2026,
+        byDistrict: [{ district: "Tuticorin", seeds: 10 * calls }, { district: "Kanchipuram", seeds: 5 }, { district: 7, seeds: 1 }],
+      }),
+    };
+  };
+  const service = createUdhaviService({ url: "https://udhavi.example/api", fetchImpl, ttlMs: 1000, now: () => clock });
+  const first = await service.get();
+  assert.deepEqual(first.districts, [
+    { district: "Tuticorin", key: "TUTICORIN", seeds: 10 },
+    { district: "Kanchipuram", key: "KANCHEEPURAM", seeds: 5 },
+  ]);
+  assert.equal(first.totalSeeds, 15);
+  await service.get();
+  assert.equal(calls, 1, "cached within the TTL");
+  assert.equal((await service.get({ force: true })).districts[0].seeds, 20, "refresh always re-fetches");
+  fail = true;
+  clock = 5000;
+  assert.equal((await service.get()).districts[0].seeds, 20, "last good data is kept when the API fails");
+
+  const broken = createUdhaviService({ fetchImpl: async () => ({ ok: false, status: 502 }) });
+  await assert.rejects(() => broken.get(), /HTTP 502/);
+});
+
+test("dashboard API adds Udhavi to admin palm targets and survives an Udhavi failure", async (t) => {
+  const payload = {
+    datasets: [
+      { source: "merge", headers: ["Year", "District", "Seedlings"], rows: [] },
+      { source: "palm", headers: ["Year", "District", "Department Type", "Seedlings"], rows: [] },
+    ],
+  };
+  const dashboardService = { getDashboardData: async () => payload, forceRefresh: async () => payload };
+  let forced = null;
+  let fail = false;
+  const udhavi = {
+    get: async ({ force }) => {
+      forced = force;
+      if (fail) throw new Error("Udhavi down");
+      return { generatedAt: "2026-11-11T00:00:00Z", districts: [{ district: "Ariyalur", key: "ARIYALUR", seeds: 9 }] };
+    },
+  };
+  const auth = testAuth();
+  const app = createApp({ dashboardService, allowedOrigins: [], auth, udhavi });
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await once(server, "listening");
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { Authorization: `Bearer ${await loginToken(base, "admin", "admin-pass-123")}` };
+
+  const data = await (await fetch(`${base}/api/dashboard-data`, { headers })).json();
+  assert.equal(data.palmTargets.udhavi.districts[0].seeds, 9);
+  assert.equal(forced, false);
+  await fetch(`${base}/api/refresh`, { method: "POST", headers });
+  assert.equal(forced, true);
+  fail = true;
+  const failed = await fetch(`${base}/api/dashboard-data`, { headers });
+  assert.equal(failed.status, 200);
+  assert.equal((await failed.json()).palmTargets.udhavi.error, "Udhavi down");
+});

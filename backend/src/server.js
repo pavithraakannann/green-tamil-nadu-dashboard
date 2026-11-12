@@ -2,6 +2,7 @@ import "dotenv/config";
 import { resolve } from "node:path";
 import { createApp } from "./app.js";
 import { createDashboardService } from "./dashboardService.js";
+import { createUdhaviService } from "./udhaviService.js";
 
 const required = ["GITHUB_OWNER", "GITHUB_REPO", "GITHUB_TOKEN"];
 const missing = required.filter((name) => !process.env[name]?.trim());
@@ -23,7 +24,7 @@ const dashboardService = createDashboardService({
 });
 
 await dashboardService.loadCache();
-const app = createApp({ dashboardService, allowedOrigins });
+const app = createApp({ dashboardService, allowedOrigins, udhavi: createUdhaviService() });
 const port = Number(process.env.PORT || 3001);
 app.listen(port, "0.0.0.0", () => {
   console.log(`Dashboard API listening on port ${port}.`);

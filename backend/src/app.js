@@ -2,8 +2,27 @@ import compression from "compression";
 import cors from "cors";
 import express from "express";
 import { createAuth, listDepartments, mapPointsForSession, payloadForSession } from "./auth.js";
+import { buildPalmTargetReport, buildTargetReport } from "./targets.js";
 
-export function createApp({ dashboardService, allowedOrigins, auth = createAuth() }) {
+/** Udhavi palm seeds by district for the palm target report; never fails the dashboard request. */
+async function udhaviFor(udhavi, session, force) {
+  if (!udhavi || session.role !== "admin") return null;
+  try {
+    return await udhavi.get({ force });
+  } catch (error) {
+    return { error: error.message || "The Udhavi API is unavailable." };
+  }
+}
+
+/** Session-filtered dashboard payload plus the target vs geotagged reports for that session. */
+async function sessionPayload(payload, session, udhavi, force = false) {
+  const filtered = payloadForSession(payload, session);
+  const palmTargets = buildPalmTargetReport(filtered, session);
+  if (palmTargets) palmTargets.udhavi = await udhaviFor(udhavi, session, force);
+  return { ...filtered, targets: buildTargetReport(filtered, session), palmTargets };
+}
+
+export function createApp({ dashboardService, allowedOrigins, auth = createAuth(), udhavi = null }) {
   const app = express();
   const origins = new Set(allowedOrigins);
   app.disable("x-powered-by");
@@ -63,7 +82,7 @@ export function createApp({ dashboardService, allowedOrigins, auth = createAuth(
   app.get("/api/dashboard-data", requireSession, async (request, response) => {
     try {
       response.set("Cache-Control", "no-store");
-      response.json(payloadForSession(await dashboardService.getDashboardData(), request.session));
+      response.json(await sessionPayload(await dashboardService.getDashboardData(), request.session, udhavi));
     } catch (error) {
       response.status(503).json({ error: error.message || "Dashboard data is unavailable." });
     }
@@ -81,7 +100,7 @@ export function createApp({ dashboardService, allowedOrigins, auth = createAuth(
   app.post("/api/refresh", requireSession, async (request, response) => {
     try {
       response.set("Cache-Control", "no-store");
-      response.json(payloadForSession(await dashboardService.forceRefresh(), request.session));
+      response.json(await sessionPayload(await dashboardService.forceRefresh(), request.session, udhavi, true));
     } catch (error) {
       response.status(503).json({ error: error.message || "Dashboard refresh failed." });
     }

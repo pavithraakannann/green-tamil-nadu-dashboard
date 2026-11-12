@@ -143,7 +143,25 @@ async function fetchDashboardPayload(forceRefresh, token) {
     lastSyncedAt: payload.lastSyncedAt,
     sourceUpdatedAt: payload.sourceUpdatedAt,
     warning: typeof payload.warning === "string" ? payload.warning : "",
+    targets: validTargets(payload.targets) ? payload.targets : null,
+    palmTargets: validPalmTargets(payload.palmTargets) ? payload.palmTargets : null,
   };
+}
+
+function validTargets(targets) {
+  return Boolean(targets)
+    && typeof targets.year === "string"
+    && Array.isArray(targets.groups)
+    && Array.isArray(targets.districts)
+    && targets.districts.every((entry) => entry && typeof entry.district === "string" && entry.targets && entry.achieved);
+}
+
+function validPalmTargets(targets) {
+  return Boolean(targets)
+    && typeof targets.year === "string"
+    && Array.isArray(targets.districts)
+    && targets.districts.every((entry) => entry && typeof entry.district === "string"
+      && ["target", "forest", "departments"].every((field) => Number.isFinite(entry[field])));
 }
 
 export async function refreshDashboardData(onProgress, { forceRefresh = false, token = "" } = {}) {

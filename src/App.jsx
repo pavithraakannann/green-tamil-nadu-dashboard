@@ -26,6 +26,7 @@ import {
   Table2,
   Target,
   TreePine,
+  TrendingUp,
   Upload,
   X,
 } from "lucide-react";
@@ -47,6 +48,7 @@ import {
 import { fetchMapPoints, login, refreshDashboardData, UnauthorizedError } from "./dataService.js";
 import { MapLegend, MAP_CATEGORIES, mapCategory, PlantingMap } from "./PlantingMap.jsx";
 import { circleForDivision } from "./divisionCircles.js";
+import { districtKey } from "../backend/src/districtNames.js";
 
 const NAV_ITEMS = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -54,6 +56,7 @@ const NAV_ITEMS = [
   { id: "merge", label: "Merge data", icon: Table2 },
   { id: "palm", label: "Palm data", icon: TreePine },
   { id: "gov-departments", label: "Govt departments", icon: Building2 },
+  { id: "targets", label: "Targets", icon: Target },
   { id: "reports", label: "Reports", icon: FileBarChart },
 ];
 const FILTER_FIELDS = ["District", "Circle", "Division", "Year", "Species", "Scheme"];
@@ -265,11 +268,37 @@ function downloadCsv(dataset, rows, suffix = "filtered") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+const districtKeyCache = new Map();
+/** districtKey with a cache, since it runs for every row whenever the filters change. */
+function cachedDistrictKey(value) {
+  let key = districtKeyCache.get(value);
+  if (key === undefined) {
+    key = districtKey(value);
+    districtKeyCache.set(value, key);
+  }
+  return key;
+}
+
 function matchesFilters(dataset, row, filters) {
   return FILTER_FIELDS.every((field) => {
     const selected = filters[field];
-    return selected === "all" || filterValue(dataset, row, field) === selected;
+    if (selected === "all") return true;
+    // Merge and palm spell districts differently ("Ariyalur" / "ARIYALUR"), so compare by district key.
+    if (field === "District") return cachedDistrictKey(filterValue(dataset, row, field)) === cachedDistrictKey(selected);
+    return filterValue(dataset, row, field) === selected;
   });
+}
+
+/** One display name per district: prefers the mixed-case spelling over ALL CAPS. */
+function districtOptions(names) {
+  const byKey = new Map();
+  for (const name of names) {
+    const key = cachedDistrictKey(name);
+    const current = byKey.get(key);
+    const isCaps = (value) => value === value.toLocaleUpperCase("en");
+    if (!current || (isCaps(current) && !isCaps(name))) byKey.set(key, name);
+  }
+  return [...byKey.values()];
 }
 
 function uniqueSorted(values) {
@@ -484,7 +513,7 @@ function SectionHeading({ eyebrow, title, description, action }) {
   );
 }
 
-function FilterBar({ options, filters, setFilters, onClear, compact = false }) {
+function FilterBar({ options, filters, setFilters, onClear, compact = false, hideFields = [] }) {
   const filterControl = (field) => (
     <label className="select-wrap" key={field}>
       <span>{field}</span>
@@ -503,7 +532,7 @@ function FilterBar({ options, filters, setFilters, onClear, compact = false }) {
     <div className={`filter-bar ${compact ? "filter-bar-compact" : ""}`}>
       <div className="filter-main-row">
         <div className="filter-title"><span className="filter-dot" /> Filters</div>
-        {FILTER_FIELDS.filter((field) => field !== "Year").map(filterControl)}
+        {FILTER_FIELDS.filter((field) => field !== "Year" && !hideFields.includes(field)).map(filterControl)}
         <button className="clear-filter" onClick={onClear} title="Clear all filters">
           <FilterX size={15} /> <span>Clear</span>
         </button>
@@ -636,7 +665,6 @@ function ShareCell({ value, total, max }) {
 }
 
 function AbstractTable({ title, subtitle, label, groups, onSelect }) {
-  const totalRecords = groups.reduce((total, group) => total + group.records, 0);
   const totalSeedlings = groups.reduce((total, group) => total + group.seedlings, 0);
 
   return (
@@ -647,7 +675,7 @@ function AbstractTable({ title, subtitle, label, groups, onSelect }) {
       </div>
       <div className="table-scroll">
         <table>
-          <thead><tr><th>{label}</th><th className="num">Planting records</th><th className="num">Seedlings reported</th><th className="num">Share of seedlings</th></tr></thead>
+          <thead><tr><th>{label}</th><th className="num">Seedlings reported</th><th className="num">Share of seedlings</th></tr></thead>
           <tbody>
             {groups.map((group, index) => (
               <tr
@@ -657,16 +685,15 @@ function AbstractTable({ title, subtitle, label, groups, onSelect }) {
                 title={onSelect ? `View ${group.name} dashboard` : undefined}
               >
                 <td><div className="name-cell"><RankBadge index={index} /><span>{group.name}</span></div></td>
-                <td className="num">{formatNumber(group.records)}</td>
                 <td className="num strong">{formatNumber(group.seedlings)}</td>
                 <ShareCell value={group.seedlings} total={totalSeedlings} max={groups[0]?.seedlings} />
               </tr>
             ))}
             {!groups.length && (
-              <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No data found</strong><span>Change the filters and try again.</span></td></tr>
+              <tr><td className="table-empty" colSpan={3}><Sprout size={23} /><strong>No data found</strong><span>Change the filters and try again.</span></td></tr>
             )}
             {groups.length > 0 && (
-              <tr className="totals-row"><td>Total</td><td className="num">{formatNumber(totalRecords)}</td><td className="num">{formatNumber(totalSeedlings)}</td><td className="num">100%</td></tr>
+              <tr className="totals-row"><td>Total</td><td className="num">{formatNumber(totalSeedlings)}</td><td className="num">100%</td></tr>
             )}
           </tbody>
         </table>
@@ -805,22 +832,11 @@ function progressTone(percent) {
 }
 
 /** Forest Department district targets (uploaded on the Forest Department page) against seedlings reported. */
-function TargetProgress({ forestRows, year, onUploadTargets }) {
-  const targets = useMemo(() => loadDistrictTargets(forestRows).targetsByYear[year] ?? {}, [forestRows, year]);
-  const items = useMemo(() => {
-    const achieved = new Map();
-    for (const { dataset, row } of forestRows) {
-      if (valueAt(dataset, row, "Year") !== year) continue;
-      const key = normalizeDistrictName(valueAt(dataset, row, "District"));
-      achieved.set(key, (achieved.get(key) ?? 0) + countAt(dataset, row));
-    }
-    return Object.entries(targets)
-      .map(([key, entry]) => {
-        const done = achieved.get(key) ?? 0;
-        return { key, district: entry.district, target: entry.target, done, percent: entry.target ? (done / entry.target) * 100 : 0 };
-      })
-      .sort((a, b) => b.percent - a.percent || a.district.localeCompare(b.district));
-  }, [forestRows, targets, year]);
+function TargetProgress({ targets, district, onOpenTargets }) {
+  const year = targets?.year ?? currentReportingYear();
+  const items = useMemo(() => (targets ? targetDistrictRows(targets, ["forest"], district) : [])
+    .map((row) => ({ key: row.name, district: row.name, target: row.target, done: row.achieved, percent: achievementPercent(row.achieved, row.target) }))
+    .sort((a, b) => b.percent - a.percent || a.district.localeCompare(b.district)), [targets, district]);
   const totalTarget = items.reduce((total, item) => total + item.target, 0);
   const totalDone = items.reduce((total, item) => total + item.done, 0);
   const overall = totalTarget ? (totalDone / totalTarget) * 100 : 0;
@@ -830,8 +846,9 @@ function TargetProgress({ forestRows, year, onUploadTargets }) {
       <div className="chart-heading">
         <div>
           <h2>Target vs achievement · Forest Department</h2>
-          <p>{year} district targets against geotagged seedlings reported (respects the district filter).</p>
+          <p>{year} district targets against geotagged seedlings (palm excluded; respects the district filter).</p>
         </div>
+        {onOpenTargets && <button className="button button-outline target-open" onClick={onOpenTargets}><Target size={15} /> All targets</button>}
         {items.length > 0 && (
           <div className={`target-overall tone-${progressTone(overall)}`}>
             <strong>{overall.toFixed(1)}%</strong>
@@ -855,10 +872,7 @@ function TargetProgress({ forestRows, year, onUploadTargets }) {
       ) : (
         <div className="empty-chart target-empty">
           <Target size={24} />
-          <span>No district targets uploaded for {year}.</span>
-          {onUploadTargets && (
-            <button className="button button-outline" onClick={onUploadTargets}><Upload size={15} /> Upload targets on the Forest Department page</button>
-          )}
+          <span>No Forest Department targets for this selection.</span>
         </div>
       )}
     </article>
@@ -1006,7 +1020,226 @@ function MapPage({ rows, mapState, onRetry, isAdmin }) {
   );
 }
 
-function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, lockedDepartment = "", mapState, onRetryMap }) {
+/** Adds the given target groups for one district entry. */
+function sumGroups(entry, groupIds, field) {
+  return groupIds.reduce((total, id) => total + (entry[field][id] ?? 0), 0);
+}
+
+function matchesTargetDistrict(entry, district) {
+  return district === "all" || entry.key === districtKey(district);
+}
+
+/** One row per district for the chosen groups. */
+function targetDistrictRows(targets, groupIds, district = "all") {
+  return targets.districts
+    .filter((entry) => matchesTargetDistrict(entry, district))
+    .map((entry) => ({ name: entry.district, target: sumGroups(entry, groupIds, "targets"), achieved: sumGroups(entry, groupIds, "achieved") }))
+    .filter((row) => row.target > 0 || row.achieved > 0);
+}
+
+/** One row per target group, across the chosen district(s). */
+function targetGroupRows(targets, groupIds, district = "all") {
+  const entries = targets.districts.filter((entry) => matchesTargetDistrict(entry, district));
+  return targets.groups
+    .filter((group) => groupIds.includes(group.id))
+    .map((group) => ({
+      id: group.id,
+      name: group.label,
+      target: entries.reduce((total, entry) => total + (entry.targets[group.id] ?? 0), 0),
+      achieved: entries.reduce((total, entry) => total + (entry.achieved[group.id] ?? 0), 0),
+    }))
+    .filter((row) => row.target > 0 || row.achieved > 0);
+}
+
+function achievementPercent(achieved, target) {
+  return target ? (achieved / target) * 100 : 0;
+}
+
+function TargetBarCell({ achieved, target }) {
+  const percent = achievementPercent(achieved, target);
+  const tone = target ? progressTone(percent) : "mid";
+  return (
+    <td className="num share-cell target-cell">
+      <div className="share-wrap">
+        <div className="share-bar"><span className={`tone-${tone}`} style={{ width: `${Math.min(100, Math.max(percent, percent > 0 ? 2 : 0))}%` }} /></div>
+        <em className={`tone-${tone}`}>{`${percent.toFixed(1)}%`}</em>
+      </div>
+    </td>
+  );
+}
+
+/** Target vs geotagged table. Sorted by lowest achievement first so laggards stand out. */
+function TargetTable({ title, subtitle, label, rows, onSelect, sortBy = "percent" }) {
+  const sorted = useMemo(() => [...rows].sort((a, b) => (
+    sortBy === "target"
+      ? b.target - a.target || a.name.localeCompare(b.name)
+      : achievementPercent(b.achieved, b.target) - achievementPercent(a.achieved, a.target) || b.target - a.target
+  )), [rows, sortBy]);
+  const totalTarget = rows.reduce((total, row) => total + row.target, 0);
+  const totalAchieved = rows.reduce((total, row) => total + row.achieved, 0);
+
+  return (
+    <section className="report-table-card target-table">
+      <div className="report-table-heading">
+        <div><h2>{title}</h2><p>{subtitle}</p></div>
+        <span>{formatNumber(rows.length)} {label.toLowerCase()}s</span>
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>{label}</th>
+              <th className="num">Target</th>
+              <th className="num">Geotagged</th>
+              <th className="num">Achievement</th>
+              <th className="num">Balance to plant</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((row, index) => (
+              <tr
+                key={row.id ?? row.name}
+                className={onSelect ? "clickable-row" : undefined}
+                onClick={onSelect ? () => onSelect(row) : undefined}
+                title={onSelect ? `Show ${row.name} by district` : undefined}
+              >
+                <td><div className="name-cell"><RankBadge index={index} /><span>{row.name}</span></div></td>
+                <td className="num">{formatNumber(row.target)}</td>
+                <td className="num strong">{formatNumber(row.achieved)}</td>
+                <TargetBarCell achieved={row.achieved} target={row.target} />
+                <td className="num balance-cell">{row.achieved >= row.target ? <span className="target-met">Target met</span> : formatNumber(row.target - row.achieved)}</td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr><td className="table-empty" colSpan={5}><Target size={23} /><strong>No targets for this selection</strong><span>Change the filters and try again.</span></td></tr>
+            )}
+            {rows.length > 0 && (
+              <tr className="totals-row">
+                <td>Total</td>
+                <td className="num">{formatNumber(totalTarget)}</td>
+                <td className="num">{formatNumber(totalAchieved)}</td>
+                <td className="num">{totalTarget ? `${achievementPercent(totalAchieved, totalTarget).toFixed(1)}%` : "-"}</td>
+                <td className="num">{formatNumber(Math.max(0, totalTarget - totalAchieved))}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function TargetStats({ target, achieved, year, note }) {
+  const percent = achievementPercent(achieved, target);
+  return (
+    <div className="stat-grid">
+      <StatCard title={`Target ${year}`} value={formatNumber(target)} note={note} icon={Target} />
+      <StatCard title="Geotagged so far" value={formatNumber(achieved)} note="Geotagged seedlings · palm excluded" icon={Sprout} tone="mint" />
+      <StatCard title="Achievement" value={`${percent.toFixed(1)}%`} note={percent >= 100 ? "Target met" : "Of the target"} icon={TrendingUp} tone="gold" />
+      <StatCard title="Balance to plant" value={formatNumber(Math.max(0, target - achieved))} note="Target minus geotagged" icon={TreePine} tone="blue" />
+    </div>
+  );
+}
+
+function downloadTargetCsv(rows, label, suffix) {
+  downloadCsv(
+    { source: "targets", headers: [label, "Target", "Geotagged", "Achievement (%)", "Balance to plant"] },
+    rows.map((row) => [
+      row.name, row.target, row.achieved,
+      row.target ? achievementPercent(row.achieved, row.target).toFixed(1) : "",
+      Math.max(0, row.target - row.achieved),
+    ]),
+    suffix,
+  );
+}
+
+/** Admin page: target vs geotagged by department and by district. */
+function TargetsPage({ targets }) {
+  const [groupId, setGroupId] = useState("all");
+  const [district, setDistrict] = useState("all");
+  if (!targets) {
+    return (
+      <>
+        <SectionHeading eyebrow="Targets" title="Target vs geotagged" description="Targets are not available from the server yet." />
+        <div className="empty-chart"><Target size={24} /><span>Click “Refresh data” to load the targets.</span></div>
+      </>
+    );
+  }
+  const allIds = targets.groups.map((group) => group.id);
+  const selectedIds = groupId === "all" ? allIds : [groupId];
+  const selectedGroup = targets.groups.find((group) => group.id === groupId);
+  const groupRows = targetGroupRows(targets, allIds, district);
+  const districtRows = targetDistrictRows(targets, selectedIds, district);
+  const totalTarget = districtRows.reduce((total, row) => total + row.target, 0);
+  const totalAchieved = districtRows.reduce((total, row) => total + row.achieved, 0);
+  const scope = `${selectedGroup ? selectedGroup.label : "All departments"}${district === "all" ? "" : ` · ${district}`}`;
+  const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+  return (
+    <>
+      <SectionHeading
+        eyebrow={`Targets ${targets.year}`}
+        title="Target vs geotagged"
+        description={`District and department targets from “${targets.sourceFile}”, compared with geotagged seedlings for ${targets.year}.`}
+        action={(
+          <button className="button button-primary" onClick={() => downloadTargetCsv(districtRows, "District", `targets-${slug(scope)}`)}>
+            <Download size={16} /> Export CSV
+          </button>
+        )}
+      />
+      <div className="report-controls gov-department-filter">
+        <label className="report-selector" htmlFor="target-group-select">
+          <span>Department</span>
+          <span className="select-wrap report-select gov-department-select">
+            <select id="target-group-select" value={groupId} onChange={(event) => setGroupId(event.target.value)}>
+              <option value="all">All departments</option>
+              {targets.groups.map((group) => <option key={group.id} value={group.id}>{group.label}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        <label className="report-selector" htmlFor="target-district-select">
+          <span>District</span>
+          <span className="select-wrap report-select">
+            <select id="target-district-select" value={district} onChange={(event) => setDistrict(event.target.value)}>
+              <option value="all">All districts</option>
+              {targets.districts.map((entry) => <option key={entry.key} value={entry.district}>{entry.district}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        {(groupId !== "all" || district !== "all") && (
+          <button className="button button-outline" onClick={() => { setGroupId("all"); setDistrict("all"); }}><FilterX size={15} /> Clear</button>
+        )}
+      </div>
+      <TargetStats target={totalTarget} achieved={totalAchieved} year={targets.year} note={scope} />
+      <div className="target-tables">
+        {groupId === "all" && (
+          <TargetTable
+            title="Department-wise target vs geotagged"
+            subtitle={`${district === "all" ? "All districts" : district} · click a department to see its districts.`}
+            label="Department"
+            rows={groupRows}
+            sortBy="target"
+            onSelect={(row) => { setGroupId(row.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+          />
+        )}
+        <TargetTable
+          title="District-wise target vs geotagged"
+          subtitle={`${selectedGroup ? selectedGroup.label : "All departments"} · highest achievement first.`}
+          label="District"
+          rows={districtRows}
+        />
+      </div>
+      {targets.unmatchedDistricts?.length > 0 && (
+        <div className="report-note"><Leaf size={16} /><span>Seedlings from districts not in the target sheet are not counted: {targets.unmatchedDistricts.map((entry) => `${entry.district} (${formatNumber(entry.achieved)})`).join(", ")}.</span></div>
+      )}
+      <div className="report-note"><Leaf size={16} /><span>Geotagged seedlings only (palm excluded). MGNREGS targets are added to Rural Development &amp; Panchayat Raj; Corporation City and Municipality &amp; Town Panchayat are compared with Municipal Administration.</span></div>
+    </>
+  );
+}
+
+function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, lockedDepartment = "", mapState, onRetryMap, targets }) {
   const department = lockedDepartment ? "all" : selectedDepartment;
   const allGovRows = useMemo(
     () => rows.filter(({ dataset, row }) => govDepartmentAt(dataset, row)),
@@ -1058,15 +1291,25 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
     && (department === "all" || point.govDepartment === department)
   )), [mapState?.points, year, district, department]);
   const departmentMapSeedlings = departmentPoints.reduce((total, point) => total + point.seedlings, 0);
+  // Target groups for this view: the department's own group, or every government group for "all".
+  const targetGroupIds = useMemo(() => {
+    if (!targets) return [];
+    if (lockedDepartment) return targets.groups.map((group) => group.id);
+    if (department === "all") return targets.groups.map((group) => group.id).filter((id) => id !== "forest" && id !== "others");
+    const id = targets.govGroups?.[department.trim().replace(/\s+/g, " ").toLocaleUpperCase("en")];
+    return id ? [id] : [];
+  }, [targets, lockedDepartment, department]);
+  const showTargets = Boolean(targets) && targetGroupIds.length > 0 && (year === targets.year || year === "all");
+  const targetGroup = targets?.groups.find((group) => group.id === targetGroupIds[0]);
 
   function downloadAbstract() {
     const groups = isAll ? departments : byDistrict;
     const header = isAll ? "Government Department" : "District";
-    const abstractRows = groups.map((group) => [group.name, group.records, group.seedlings]);
+    const abstractRows = groups.map((group) => [group.name, group.seedlings]);
     const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const suffix = `${isAll ? "govt-departments" : slug(departmentTitle)}-${slug(yearLabel)}-abstract`;
     downloadCsv(
-      { source: "gov-department", headers: [header, "Planting records", "Seedlings reported"] },
+      { source: "gov-department", headers: [header, "Seedlings reported"] },
       abstractRows,
       suffix,
     );
@@ -1163,6 +1406,32 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
         )}
         {!isAll && <RankingCard rows={selectedRows} field="District" label="District" className="chart-wide" />}
       </div>
+      {showTargets && (
+        <div className="gov-target-section">
+          <div className="stat-group-heading">
+            <h2>Target vs geotagged · {targets.year}</h2>
+            <p>{isAll
+              ? "Government department targets from the district target sheet, against geotagged seedlings (palm excluded)."
+              : `Target for ${targetGroup?.label ?? departmentTitle}, against geotagged seedlings (palm excluded).`}</p>
+          </div>
+          {isAll ? (
+            <TargetTable
+              title="Department-wise target vs geotagged"
+              subtitle={district === "all" ? "All districts" : district}
+              label="Department"
+              rows={targetGroupRows(targets, targetGroupIds, district)}
+              sortBy="target"
+            />
+          ) : (
+            <TargetTable
+              title="District-wise target vs geotagged"
+              subtitle={targetGroup?.label ?? departmentTitle}
+              label="District"
+              rows={targetDistrictRows(targets, targetGroupIds, district)}
+            />
+          )}
+        </div>
+      )}
       <div className="gov-abstract-tables">
         {isAll ? (
           <AbstractTable
@@ -1175,7 +1444,7 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
         ) : (
           <AbstractTable
             title="District-wise abstract"
-            subtitle={`Planting records and seedlings for ${departmentTitle} by district.`}
+            subtitle={`Seedlings reported for ${departmentTitle} by district.`}
             label="District"
             groups={byDistrict}
           />
@@ -1627,7 +1896,7 @@ function OtherDepartmentDetails({ rows, filters, setFilters, options, onBack, on
   );
 }
 
-function Overview({ summary, chartRows, filters, options, setFilters, onClear, datasets, onViewDivision, onViewForestDepartment, onViewOtherDepartments, onViewPalmDetails }) {
+function Overview({ summary, chartRows, filters, options, setFilters, onClear, datasets, targets, onViewTargets, onViewDivision, onViewForestDepartment, onViewOtherDepartments, onViewPalmDetails }) {
   const nonPalmRows = chartRows.filter(({ dataset }) => dataset.source !== "palm");
   const palmRows = chartRows.filter(({ dataset }) => dataset.source === "palm");
   const nonPalmSummary = summarize(nonPalmRows);
@@ -1658,7 +1927,6 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
   const species = groupData(chartRows, "Species", "seedlings").slice(0, 7);
   const schemes = groupData(chartRows, "Scheme", "records").slice(0, 6);
   const trend = useMemo(() => monthlyTrend(nonPalmRows), [chartRows]);
-  const targetYear = filters.Year !== "all" ? filters.Year : reportingYear;
   const sources = datasets.map((dataset) => ({
     name: dataset.source === "merge" ? "Merge data" : "Palm data",
     value: dataset.rows
@@ -1698,7 +1966,7 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
         <ChartCard title="Monthly trend" subtitle={`Geotagged seedlings per month · excludes palm${trend.length === 12 ? " · latest 12 months" : ""}`} className="chart-wide">
           <MonthlyTrendChart data={trend} />
         </ChartCard>
-        <TargetProgress forestRows={forestRows} year={targetYear} onUploadTargets={onViewForestDepartment} />
+        <TargetProgress targets={targets} district={filters.District} onOpenTargets={onViewTargets} />
         <RankingCard rows={nonPalmRows} field="District" label="District" />
         <RankingCard rows={nonPalmRows} field="Division" label="Division" />
       </div>
@@ -1914,7 +2182,13 @@ function DataTable({ dataset, rows }) {
   );
 }
 
-function DatasetPage({ dataset, rows, title, description, summary, options, filters, setFilters, onClear }) {
+function DatasetPage({ dataset, rows, title, description, summary, options, filters, setFilters, onClear, children, hideTable = false, hideFilters = [] }) {
+  // A hidden filter must not keep filtering this page, so reset it if another page set it.
+  useEffect(() => {
+    if (hideFilters.some((field) => filters[field] !== "all")) {
+      setFilters((current) => ({ ...current, ...Object.fromEntries(hideFilters.map((field) => [field, "all"])) }));
+    }
+  }, [hideFilters, filters, setFilters]);
   return (
     <>
       <SectionHeading
@@ -1923,7 +2197,7 @@ function DatasetPage({ dataset, rows, title, description, summary, options, filt
         description={description}
         action={<button className="button button-primary" onClick={() => downloadCsv(dataset, rows)}><Download size={16} /> Download filtered CSV</button>}
       />
-      <FilterBar compact options={options} filters={filters} setFilters={setFilters} onClear={onClear} />
+      <FilterBar compact options={options} filters={filters} setFilters={setFilters} onClear={onClear} hideFields={hideFilters} />
       <div className="dataset-summary">
         <div><span>Filtered records</span><strong>{formatNumber(summary.records)}</strong></div>
         <div><span>Seedlings reported</span><strong>{formatNumber(summary.seedlings)}</strong></div>
@@ -1931,10 +2205,427 @@ function DatasetPage({ dataset, rows, title, description, summary, options, filt
         <div><span>Circles</span><strong>{formatNumber(summary.circles)}</strong></div>
         <div><span>Schemes</span><strong>{formatNumber(summary.schemes)}</strong></div>
       </div>
-      <DataTable dataset={dataset} rows={rows} />
+      {children}
+      {!hideTable && <DataTable dataset={dataset} rows={rows} />}
     </>
   );
 }
+
+/**
+ * Each district's circle, taken from the circle most of its seedlings are reported under.
+ * Department rows often have no division (so no circle); this lets them follow their district.
+ */
+function districtCircleMap(rows) {
+  const counts = new Map();
+  for (const { dataset, row } of rows) {
+    const circle = valueAt(dataset, row, "Circle");
+    const key = districtKey(valueAt(dataset, row, "District"));
+    if (!circle || !key) continue;
+    const byCircle = counts.get(key) ?? new Map();
+    byCircle.set(circle, (byCircle.get(circle) ?? 0) + countAt(dataset, row));
+    counts.set(key, byCircle);
+  }
+  return new Map([...counts].map(([key, byCircle]) => [key, [...byCircle].sort((a, b) => b[1] - a[1])[0][0]]));
+}
+
+const sortByAchievement = (a, b) => (
+  (b.target ? 1 : 0) - (a.target ? 1 : 0)
+  || achievementPercent(b.achieved, b.target) - achievementPercent(a.achieved, a.target)
+  || b.achieved - a.achieved
+  || a.name.localeCompare(b.name)
+);
+
+/**
+ * Palm target vs palm geotagged by circle and district, from the palm rows that match the page
+ * filters. "All years" means the target year; a year without targets shows a target of 0.
+ */
+function palmTargetRows(palmTargets, dataset, filters, districtCircles) {
+  const year = filters.Year === "all" ? palmTargets.year : filters.Year;
+  const hasTargets = year === palmTargets.year;
+  const narrowed = ["Division", "Species", "Scheme"].some((field) => filters[field] !== "all");
+  const circleOf = (key) => districtCircles.get(key) || "Circle not mapped";
+  const byKey = new Map();
+  const entryFor = (key, name, target) => {
+    if (!byKey.has(key)) byKey.set(key, { key, name, circle: circleOf(key), target, forest: 0, departments: 0, udhavi: 0, achieved: 0, byDepartment: new Map() });
+    return byKey.get(key);
+  };
+  if (!narrowed) {
+    for (const entry of palmTargets.districts) {
+      if (entry.target > 0 && (filters.District === "all" || entry.key === districtKey(filters.District))) {
+        entryFor(entry.key, entry.district, hasTargets ? entry.target : 0);
+      }
+    }
+  }
+  const targetByKey = new Map(palmTargets.districts.map((entry) => [entry.key, entry]));
+  // The circle filter is applied by district below, so rows without a division still count.
+  const rowFilters = { ...filters, Circle: "all", Year: "all" };
+  for (const row of dataset.rows) {
+    if (valueAt(dataset, row, "Year") !== year || !matchesFilters(dataset, row, rowFilters)) continue;
+    const districtName = valueAt(dataset, row, "District");
+    const key = districtKey(districtName) || "NOTSPECIFIED";
+    const known = targetByKey.get(key);
+    const entry = entryFor(key, known?.district ?? (districtName || "Not specified"), hasTargets && known?.target > 0 ? known.target : 0);
+    const count = countAt(dataset, row);
+    const bucket = valueAt(dataset, row, "Department Type").toLocaleLowerCase() === "forest department" ? "forest" : "departments";
+    entry[bucket] += count;
+    entry.achieved += count;
+    if (bucket === "departments") addDepartment(entry.byDepartment, departmentName(dataset, row), count);
+  }
+  // Udhavi gives district totals only (current year, no division/scheme), so it is added for the
+  // target year when no division or scheme filter is set.
+  const udhavi = palmTargets.udhavi?.districts && hasTargets && !narrowed ? palmTargets.udhavi.districts : [];
+  for (const item of udhavi) {
+    if (filters.District !== "all" && item.key !== districtKey(filters.District)) continue;
+    const known = targetByKey.get(item.key);
+    const entry = entryFor(item.key, known?.district ?? item.district, known?.target > 0 ? known.target : 0);
+    entry.udhavi += item.seeds;
+    entry.achieved += item.seeds;
+  }
+
+  const groups = new Map();
+  for (const entry of byKey.values()) {
+    if (filters.Circle !== "all" && entry.circle !== filters.Circle) continue;
+    const group = groups.get(entry.circle) ?? { name: entry.circle, districts: [], target: 0, forest: 0, departments: 0, udhavi: 0, achieved: 0, byDepartment: new Map() };
+    group.districts.push(entry);
+    for (const field of PALM_FIELDS) group[field] += entry[field];
+    mergeDepartments(group.byDepartment, entry.byDepartment);
+    groups.set(entry.circle, group);
+  }
+  const circles = [...groups.values()];
+  for (const group of circles) group.districts.sort(sortByAchievement);
+  circles.sort((a, b) => (a.name === "Circle not mapped") - (b.name === "Circle not mapped") || sortByAchievement(a, b));
+  return { year, circles, rows: circles.flatMap((group) => group.districts) };
+}
+
+const PALM_FIELDS = ["target", "forest", "departments", "udhavi", "achieved"];
+
+/** Shows ALL CAPS department names in title case ("RURAL DEVELOPMENT" -> "Rural Development"). */
+function tidyDepartment(name) {
+  const clean = String(name || "Not specified").trim().replace(/\s+/g, " ");
+  // Mixed case is kept as written, and so are short acronyms like NGO or DRDA.
+  if (clean !== clean.toLocaleUpperCase("en") || /^[A-Z]{2,5}$/.test(clean)) return clean;
+  return clean.toLocaleLowerCase("en")
+    .replace(/(^|[\s(&/-])([a-z])/g, (match, lead, letter) => lead + letter.toLocaleUpperCase("en"))
+    .replace(/\s(And|Of|The|For)\b/g, (word) => word.toLocaleLowerCase("en"));
+}
+
+/** Adds seedlings to a department map, merging names case-insensitively. */
+function addDepartment(map, name, count) {
+  const label = tidyDepartment(name);
+  const key = label.toLocaleUpperCase("en");
+  const item = map.get(key) ?? { name: label, seedlings: 0 };
+  item.seedlings += count;
+  map.set(key, item);
+}
+
+function mergeDepartments(target, source) {
+  for (const item of source.values()) addDepartment(target, item.name, item.seedlings);
+}
+
+/** Department-wise palm geotagged for one district, circle or the whole table. */
+function DepartmentBreakdownRow({ title, byDepartment, total, colSpan, onClose }) {
+  const items = [...byDepartment.values()].filter((item) => item.seedlings > 0).sort((a, b) => b.seedlings - a.seedlings);
+  const max = items[0]?.seedlings ?? 0;
+  return (
+    <tr className="dept-breakdown-row">
+      <td colSpan={colSpan}>
+        <div className="dept-breakdown">
+          <div className="dept-breakdown-head">
+            <div>
+              <strong>{title} · department-wise palm geotagged</strong>
+              <span>{formatNumber(items.length)} departments · {formatNumber(total)} palm seedlings (Forest Department and Udhavi not included)</span>
+            </div>
+            <button type="button" className="button button-outline dept-breakdown-close" onClick={onClose}><X size={14} /> Close</button>
+          </div>
+          {items.length ? (
+            <ol className="dept-breakdown-list">
+              {items.map((item, index) => (
+                <li key={item.name}>
+                  <span className="dept-rank">{index + 1}</span>
+                  <span className="dept-name" title={item.name}>{item.name}</span>
+                  <span className="dept-bar"><span style={{ width: `${max ? Math.max(2, (item.seedlings / max) * 100) : 0}%` }} /></span>
+                  <span className="dept-count">{formatNumber(item.seedlings)}</span>
+                  <span className="dept-share">{total ? `${((item.seedlings / total) * 100).toFixed(1)}%` : "-"}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="dept-breakdown-empty">No department palm geotagged here yet.</p>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** District-wise palm geotagged for every department (other than Forest), one column per department. */
+function DepartmentMatrix({ circles, totals, scope, year, onClose }) {
+  const departments = [...totals.byDepartment.entries()]
+    .filter(([, item]) => item.seedlings > 0)
+    .sort((a, b) => b[1].seedlings - a[1].seedlings);
+  const cell = (row, key) => row.byDepartment.get(key)?.seedlings ?? 0;
+  const groups = circles
+    .map((group) => ({ ...group, districts: group.districts.filter((row) => row.departments > 0) }))
+    .filter((group) => group.districts.length);
+
+  function exportCsv() {
+    const line = (circle, name, row) => [circle, name, ...departments.map(([key]) => cell(row, key)), row.departments];
+    downloadCsv(
+      { source: "palm-departments", headers: ["Circle", "District", ...departments.map(([, item]) => item.name), "Total"] },
+      [
+        ...groups.flatMap((group) => [...group.districts.map((row) => line(group.name, row.name, row)), line(group.name, "Circle total", group)]),
+        line("Total", "", totals),
+      ],
+      `palm-departments-${year}`,
+    );
+  }
+
+  return (
+    <section className="report-table-card dept-matrix-card" id="palm-department-detail">
+      <div className="report-table-heading">
+        <div>
+          <h2>Department-wise palm geotagged · {year}</h2>
+          <p>{scope} · {formatNumber(departments.length)} departments · {formatNumber(totals.departments)} palm seedlings, district-wise (Forest Department and Udhavi not included).</p>
+        </div>
+        <div className="dept-matrix-actions">
+          <button className="button button-outline" onClick={exportCsv}><Download size={15} /> Export CSV</button>
+          <button className="button button-outline" onClick={onClose}><X size={15} /> Close</button>
+        </div>
+      </div>
+      <div className="table-scroll dept-matrix-scroll">
+        <table className="dept-matrix">
+          <thead>
+            <tr>
+              <th className="sticky-col sticky-circle">Circle</th>
+              <th className="sticky-col sticky-district">District</th>
+              {departments.map(([key, item]) => <th key={key} className="num dept-col" title={item.name}>{item.name}</th>)}
+              <th className="num dept-total-col">Total</th>
+            </tr>
+          </thead>
+          {groups.map((group) => (
+            <tbody key={group.name} className="circle-group">
+              {group.districts.map((row, index) => (
+                <tr key={row.key}>
+                  {index === 0 && (
+                    <td className="circle-cell sticky-col sticky-circle" rowSpan={group.districts.length + 1}>
+                      <strong>{group.name}</strong>
+                      <span>{group.districts.length} district{group.districts.length === 1 ? "" : "s"}</span>
+                    </td>
+                  )}
+                  <td className="sticky-col sticky-district">{row.name}</td>
+                  {departments.map(([key]) => {
+                    const value = cell(row, key);
+                    return <td key={key} className={`num ${value ? "" : "dept-zero"}`}>{value ? formatNumber(value) : "-"}</td>;
+                  })}
+                  <td className="num dept-total-col">{formatNumber(row.departments)}</td>
+                </tr>
+              ))}
+              <tr className="circle-total">
+                <td className="sticky-col sticky-district">Circle total</td>
+                {departments.map(([key]) => {
+                  const value = cell(group, key);
+                  return <td key={key} className={`num ${value ? "" : "dept-zero"}`}>{value ? formatNumber(value) : "-"}</td>;
+                })}
+                <td className="num dept-total-col">{formatNumber(group.departments)}</td>
+              </tr>
+            </tbody>
+          ))}
+          <tbody>
+            {groups.length ? (
+              <tr className="totals-row">
+                <td className="sticky-col sticky-circle" colSpan={2}>Total</td>
+                {departments.map(([key, item]) => <td key={key} className="num">{formatNumber(item.seedlings)}</td>)}
+                <td className="num dept-total-col">{formatNumber(totals.departments)}</td>
+              </tr>
+            ) : (
+              <tr><td className="table-empty" colSpan={3}><Building2 size={23} /><strong>No department palm geotagged for these filters</strong><span>Change the filters and try again.</span></td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** The Departments number, as a button that opens the department-wise breakdown. */
+function DepartmentsCell({ value, open, onToggle }) {
+  if (!value) return <td className="num palm-col">{formatNumber(value)}</td>;
+  return (
+    <td className="num palm-col">
+      <button type="button" className={`dept-toggle ${open ? "open" : ""}`} onClick={onToggle} aria-expanded={open} title="Show department-wise palm geotagged">
+        {formatNumber(value)} <ChevronDown size={13} />
+      </button>
+    </td>
+  );
+}
+
+function balanceCell(row) {
+  return row.target && row.achieved >= row.target
+    ? <span className="target-met">Target met</span>
+    : formatNumber(Math.max(0, row.target - row.achieved));
+}
+
+/** Circle and district-wise palm target vs palm geotagged, split into Forest Department and other departments. */
+function PalmTargetSection({ palmTargets, dataset, filters, districtCircles, showStats = false }) {
+  const result = useMemo(
+    () => (palmTargets && dataset ? palmTargetRows(palmTargets, dataset, filters, districtCircles) : null),
+    [palmTargets, dataset, filters, districtCircles],
+  );
+  const [openBreakdown, setOpenBreakdown] = useState("");
+  const toggle = (id) => setOpenBreakdown((current) => (current === id ? "" : id));
+  const [showDepartmentDetail, setShowDepartmentDetail] = useState(false);
+  useEffect(() => {
+    if (showDepartmentDetail) document.getElementById("palm-department-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [showDepartmentDetail]);
+  if (!result) {
+    return (
+      <div className="report-note"><Leaf size={16} /><span>Palm targets are not available from the server yet. Click “Refresh data” to load them.</span></div>
+    );
+  }
+  const { year, circles, rows } = result;
+  const sum = (field) => rows.reduce((total, row) => total + row[field], 0);
+  const totals = Object.fromEntries(PALM_FIELDS.map((field) => [field, sum(field)]));
+  totals.byDepartment = new Map();
+  for (const group of circles) mergeDepartments(totals.byDepartment, group.byDepartment);
+  const percent = achievementPercent(totals.achieved, totals.target);
+  const udhaviInfo = palmTargets.udhavi;
+  const scope = [filters.Circle === "all" ? "" : `${filters.Circle} circle`, filters.District === "all" ? "" : filters.District]
+    .filter(Boolean).join(" · ") || "All circles";
+
+  function exportCsv() {
+    const line = (circle, name, row) => [
+      circle, name, row.target, row.forest, row.departments, row.udhavi, row.achieved,
+      row.target ? achievementPercent(row.achieved, row.target).toFixed(1) : "0", Math.max(0, row.target - row.achieved),
+    ];
+    downloadCsv(
+      { source: "palm-targets", headers: ["Circle", "District", "Palm target", "Forest Department", "Other departments", "Udhavi", "Total palm geotagged", "Achievement (%)", "Balance to plant"] },
+      [
+        ...circles.flatMap((group) => [
+          ...group.districts.map((row) => line(group.name, row.name, row)),
+          line(group.name, "Circle total", group),
+        ]),
+        line("Total", "", totals),
+      ],
+      `palm-targets-${year}`,
+    );
+  }
+
+  return (
+    <div className="palm-target-section">
+      {showStats && (
+        <div className="stat-grid">
+          <StatCard title="Palm target" value={formatNumber(totals.target)} note={year} icon={Target} />
+          <StatCard title="Forest" value={formatNumber(totals.forest)} note="Palm geotagged" icon={TreePine} tone="mint" />
+          <StatCard title="Departments" value={formatNumber(totals.departments)} note={showDepartmentDetail ? "Hide department-wise" : "View department-wise"} icon={Building2} tone="blue" onClick={() => setShowDepartmentDetail((value) => !value)} />
+          <StatCard title="Udhavi" value={formatNumber(totals.udhavi)} note="Palm seeds" icon={Sprout} tone="mint" />
+          <StatCard title="Achievement" value={`${percent.toFixed(1)}%`} note={`Balance ${formatNumber(Math.max(0, totals.target - totals.achieved))}`} icon={TrendingUp} tone="gold" />
+        </div>
+      )}
+      {showStats && showDepartmentDetail && (
+        <DepartmentMatrix circles={circles} totals={totals} scope={scope} year={year} onClose={() => setShowDepartmentDetail(false)} />
+      )}
+      <section className="report-table-card target-table palm-target-table">
+        <div className="report-table-heading">
+          <div>
+            <h2>Palm target vs achievement · {year}</h2>
+            <p>{scope} · circle and district-wise palm geotagged by Forest Department, other departments and Udhavi. Click a Departments number to see it department-wise.</p>
+          </div>
+          <button className="button button-outline" onClick={exportCsv}><Download size={15} /> Export CSV</button>
+        </div>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr className="group-header">
+                <th rowSpan={2}>Circle</th>
+                <th rowSpan={2}>District</th>
+                <th rowSpan={2} className="num">Palm target</th>
+                <th colSpan={4} className="group-cell group-palm">Palm geotagged</th>
+                <th rowSpan={2} className="num">Achievement</th>
+                <th rowSpan={2} className="num">Balance to plant</th>
+              </tr>
+              <tr className="sub-header">
+                <th className="num palm-col">Forest</th>
+                <th className="num palm-col">Departments</th>
+                <th className="num palm-col">Udhavi</th>
+                <th className="num palm-col">Total</th>
+              </tr>
+            </thead>
+            {circles.map((group) => {
+              const openInGroup = group.districts.some((row) => openBreakdown === `district:${row.key}`) || openBreakdown === `circle:${group.name}`;
+              return (
+              <tbody key={group.name} className="circle-group">
+                {group.districts.map((row, index) => (
+                  <React.Fragment key={row.key}>
+                  <tr>
+                    {index === 0 && (
+                      <td className="circle-cell" rowSpan={group.districts.length + 1 + (openInGroup ? 1 : 0)}>
+                        <strong>{group.name}</strong>
+                        <span>{group.districts.length} district{group.districts.length === 1 ? "" : "s"}</span>
+                      </td>
+                    )}
+                    <td className="district-cell">{row.name}</td>
+                    <td className="num">{formatNumber(row.target)}</td>
+                    <td className="num palm-col">{formatNumber(row.forest)}</td>
+                    <DepartmentsCell value={row.departments} open={openBreakdown === `district:${row.key}`} onToggle={() => toggle(`district:${row.key}`)} />
+                    <td className="num palm-col">{formatNumber(row.udhavi)}</td>
+                    <td className="num palm-col strong">{formatNumber(row.achieved)}</td>
+                    <TargetBarCell achieved={row.achieved} target={row.target} />
+                    <td className="num balance-cell">{balanceCell(row)}</td>
+                  </tr>
+                  {openBreakdown === `district:${row.key}` && (
+                    <DepartmentBreakdownRow title={row.name} byDepartment={row.byDepartment} total={row.departments} colSpan={8} onClose={() => setOpenBreakdown("")} />
+                  )}
+                  </React.Fragment>
+                ))}
+                <tr className="circle-total">
+                  <td className="district-cell">Circle total</td>
+                  <td className="num">{formatNumber(group.target)}</td>
+                  <td className="num">{formatNumber(group.forest)}</td>
+                  <DepartmentsCell value={group.departments} open={openBreakdown === `circle:${group.name}`} onToggle={() => toggle(`circle:${group.name}`)} />
+                  <td className="num">{formatNumber(group.udhavi)}</td>
+                  <td className="num">{formatNumber(group.achieved)}</td>
+                  <td className="num">{`${achievementPercent(group.achieved, group.target).toFixed(1)}%`}</td>
+                  <td className="num balance-cell">{balanceCell(group)}</td>
+                </tr>
+                {openBreakdown === `circle:${group.name}` && (
+                  <DepartmentBreakdownRow title={`${group.name} circle`} byDepartment={group.byDepartment} total={group.departments} colSpan={8} onClose={() => setOpenBreakdown("")} />
+                )}
+              </tbody>
+              );
+            })}
+            <tbody>
+              {!rows.length && (
+                <tr><td className="table-empty" colSpan={9}><Target size={23} /><strong>No palm data for these filters</strong><span>Change the filters and try again.</span></td></tr>
+              )}
+              {rows.length > 0 && (
+                <tr className="totals-row">
+                  <td colSpan={2}>Total</td>
+                  <td className="num">{formatNumber(totals.target)}</td>
+                  <td className="num">{formatNumber(totals.forest)}</td>
+                  <DepartmentsCell value={totals.departments} open={openBreakdown === "total"} onToggle={() => toggle("total")} />
+                  <td className="num">{formatNumber(totals.udhavi)}</td>
+                  <td className="num">{formatNumber(totals.achieved)}</td>
+                  <td className="num">{`${percent.toFixed(1)}%`}</td>
+                  <td className="num">{formatNumber(Math.max(0, totals.target - totals.achieved))}</td>
+                </tr>
+              )}
+              {rows.length > 0 && openBreakdown === "total" && (
+                <DepartmentBreakdownRow title={scope} byDepartment={totals.byDepartment} total={totals.departments} colSpan={9} onClose={() => setOpenBreakdown("")} />
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {udhaviInfo?.error ? (
+        <div className="report-note udhavi-warning"><Leaf size={16} /><span>Udhavi data could not be loaded ({udhaviInfo.error}). Click “Refresh data” to try again.</span></div>
+      ) : udhaviInfo?.generatedAt ? (
+        <div className="report-note"><Leaf size={16} /><span>Udhavi data updated {formatDateTime(udhaviInfo.generatedAt)}. It refreshes with “Refresh data”.</span></div>
+      ) : null}
+    </div>
+  );
+}
+
+const PALM_HIDDEN_FILTERS = ["Species"];
 
 const REPORT_COLUMNS = [
   { key: "forest", label: "Forest Department" },
@@ -2074,8 +2765,7 @@ function Reports({ rows, options, filters, setFilters, onClear }) {
           </table>
         </div>
       </section>
-      <div className="report-note"><Leaf size={16} /><span>Geotagged “Other departments” and Palm “Departments” include government departments, NGOs, trusts and others. Palm “Forest” is palm planted by the Forest Department.</span></div>
-    </>
+      <div className="report-note"><Leaf size={16} /><span>Geotagged “Other departments” and Palm “Departments” include government departments, NGOs, trusts and others. Palm “Forest” is palm planted by the Forest Department.</span></div>    </>
   );
 }
 
@@ -2120,6 +2810,8 @@ function Dashboard({ session, onLogout }) {
   const [error, setError] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mapState, setMapState] = useState({ status: "idle", points: [], available: true, error: "" });
+  const [targets, setTargets] = useState(null);
+  const [palmTargets, setPalmTargets] = useState(null);
   const hasDataRef = useRef(false);
   const syncInProgressRef = useRef(false);
 
@@ -2141,6 +2833,8 @@ function Dashboard({ session, onLogout }) {
       setLastSyncedAt(loaded.lastSyncedAt ?? "");
       setSourceUpdatedAt(loaded.sourceUpdatedAt ?? "");
       setSyncWarning(loaded.warning);
+      setTargets(loaded.targets);
+      setPalmTargets(loaded.palmTargets);
       // Reload map points after a manual refresh, or when the old cache had no map data yet.
       setMapState((current) => (
         current.status === "ready" && (forceRefresh || !current.available)
@@ -2208,6 +2902,7 @@ function Dashboard({ session, onLogout }) {
         }
       }
     }
+    values.District = new Set(districtOptions([...values.District]));
     return Object.fromEntries(FILTER_FIELDS.map((field) => [field, [...values[field]].sort((a, b) => a.localeCompare(b))]));
   }, [datasets]);
 
@@ -2223,6 +2918,7 @@ function Dashboard({ session, onLogout }) {
     () => datasets.flatMap((dataset) => dataset.rows.map((row) => ({ dataset, row }))),
     [datasets],
   );
+  const districtCircles = useMemo(() => districtCircleMap(allRows), [allRows]);
   const summary = useMemo(() => summarize(chartRows), [chartRows]);
   const datasetSummaries = useMemo(
     () => filteredDatasets.map((dataset) => ({ ...dataset, summary: summarize(dataset.filteredRows.map((row) => ({ dataset, row }))) })),
@@ -2257,6 +2953,12 @@ function Dashboard({ session, onLogout }) {
 
   function viewForestDepartmentDetails() {
     setActivePage("forest-department-details");
+    setMobileNavOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function viewTargets() {
+    setActivePage("targets");
     setMobileNavOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -2330,6 +3032,8 @@ function Dashboard({ session, onLogout }) {
               setFilters={setFilters}
               onClear={clearFilters}
               datasets={datasets}
+              targets={targets}
+              onViewTargets={viewTargets}
               onViewDivision={viewDivisionDetails}
               onViewForestDepartment={viewForestDepartmentDetails}
               onViewOtherDepartments={viewOtherDepartmentDetails}
@@ -2393,8 +3097,10 @@ function Dashboard({ session, onLogout }) {
               lockedDepartment={isAdmin ? "" : session.department}
               mapState={mapState}
               onRetryMap={loadMapPoints}
+              targets={targets}
             />
           )}
+          {isAdmin && activePage === "targets" && <TargetsPage targets={targets} />}
           {isAdmin && activePage === "planting-map" && (
             <MapPage rows={allRows} mapState={mapState} onRetry={loadMapPoints} isAdmin={isAdmin} />
           )}
@@ -2402,7 +3108,9 @@ function Dashboard({ session, onLogout }) {
             <DatasetPage dataset={merge} rows={merge.filteredRows} title="Merge data" description="Browse privacy-safe aggregated groups from merge.csv. Search, filter and export the public summary data." summary={merge.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
           )}
           {isAdmin && activePage === "palm" && palm && (
-            <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse privacy-safe aggregated groups from palm.csv with the same district, division, species and scheme filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
+            <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse privacy-safe aggregated groups from palm.csv with district, circle, division, scheme and year filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} hideTable hideFilters={PALM_HIDDEN_FILTERS}>
+              <PalmTargetSection palmTargets={palmTargets} dataset={palm} filters={filters} districtCircles={districtCircles} showStats />
+            </DatasetPage>
           )}
           {isAdmin && activePage === "reports" && (
             <Reports
