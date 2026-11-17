@@ -2,6 +2,7 @@ import compression from "compression";
 import cors from "cors";
 import express from "express";
 import { createAuth, listDepartments, mapPointsForSession, payloadForSession } from "./auth.js";
+import { buildProgressReport } from "./progress.js";
 import { buildPalmTargetReport, buildTargetReport } from "./targets.js";
 
 /** Udhavi palm seeds by district for the palm target report; never fails the dashboard request. */
@@ -19,7 +20,15 @@ async function sessionPayload(payload, session, udhavi, force = false) {
   const filtered = payloadForSession(payload, session);
   const palmTargets = buildPalmTargetReport(filtered, session);
   if (palmTargets) palmTargets.udhavi = await udhaviFor(udhavi, session, force);
-  return { ...filtered, targets: buildTargetReport(filtered, session), palmTargets };
+  let progress = null;
+  if (session.role === "admin") {
+    try {
+      progress = buildProgressReport(filtered, palmTargets?.udhavi);
+    } catch (error) {
+      console.error(`Progress report failed. ${error.message}`);
+    }
+  }
+  return { ...filtered, targets: buildTargetReport(filtered, session), palmTargets, progress };
 }
 
 export function createApp({ dashboardService, allowedOrigins, auth = createAuth(), udhavi = null }) {

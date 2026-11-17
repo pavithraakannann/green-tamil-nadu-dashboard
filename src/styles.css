@@ -779,3 +779,50 @@ td.strong { color: var(--ink); font-weight: 700; }
 .target-matrix thead { position: sticky; top: 0; z-index: 3; }
 .target-matrix thead th, .target-matrix thead tr.tm-sub th, .target-matrix thead tr:first-child th { position: static; }
 .target-matrix thead th.sticky-col { position: sticky; }
+
+/* Targets: progress abstract (DAAP + APO species, like the daily update sheet) */
+.progress-abstract { margin-bottom: 18px; }
+.pa-table { width: 100%; border-collapse: collapse; }
+.pa-table th, .pa-table td { padding: 10px 16px; border-bottom: 1px solid #e8eee9; font-size: 13px; white-space: nowrap; }
+.pa-table tr.pa-head th { color: #fff; background: #23744a; font-size: 12px; font-weight: 700; text-align: left; }
+.pa-table tr.pa-head th.num { text-align: right; }
+.pa-table tr.pa-head th:first-child { width: 64px; text-align: center; }
+.pa-table td.pa-sno { text-align: center; color: #6b7a6f; }
+.pa-table td.pa-name { font-weight: 700; color: #1f3326; }
+.pa-table td.pa-target { color: #34463a; font-weight: 600; }
+.pa-table td.pa-geo { font-weight: 700; color: #1f3326; background: #eef4fb; }
+.pa-table td.pa-pct { font-weight: 700; }
+.pa-table td.tone-text-done { color: #1f7a48; }
+.pa-table td.tone-text-mid { color: #b37b2d; }
+.pa-table td.tone-text-low { color: #c0573f; }
+.pa-table tr.pa-sub td { padding-top: 6px; padding-bottom: 6px; color: #6b7a6f; font-style: italic; font-size: 12.5px; }
+.pa-table tr.pa-sub td:nth-child(2) { padding-left: 36px; }
+.pa-table tr.pa-overall td { background: #fdf1e8; }
+.pa-table tr.pa-overall td.pa-geo { background: #fbe3d3; }
+.pa-table tr.pa-gap td { height: 14px; padding: 0; border: 0; background: transparent; }
+.pa-table tr.totals-row td { font-weight: 800; background: #e7f0f6; border-top: 2px solid #23744a; }
+.pa-table tbody tr:not(.pa-head):not(.pa-gap):not(.totals-row):hover td { background: #f7fbf8; }
+
+/* Progress: daily update sheet (as on yesterday / today / total) */
+.daily-update { margin-bottom: 18px; }
+.du-table { width: 100%; border-collapse: collapse; }
+.du-table th, .du-table td { padding: 9px 14px; border: 1px solid #b9c4bd; font-size: 13.5px; white-space: nowrap; color: #1f2a22; }
+.du-table th.du-title { padding: 12px; font-size: 18px; font-weight: 800; text-align: center; background: #fff; }
+.du-table tr.du-head th { font-size: 13.5px; font-weight: 700; text-align: center; white-space: normal; line-height: 1.3; background: #e2efea; }
+.du-table tr.du-head th.du-as-on { background: #9dc3e6; }
+.du-table tr.du-head th.du-today { background: #a9d08e; }
+.du-table tr.du-head th.du-total { background: #f4b183; }
+.du-table td.du-as-on { background: #dde5f4; }
+.du-table td.du-today { background: #e2efda; }
+.du-table td.du-total { background: #fce4d6; }
+.du-table .du-sno { width: 64px; text-align: center; }
+.du-table td.du-name, .du-table td.du-target { font-weight: 800; }
+.du-table tr.du-sub td { font-style: italic; }
+.du-table tr.du-sub td:nth-child(2) { text-align: center; }
+.du-table tr.du-strong td { font-weight: 800; }
+.du-table tr.du-strong td.du-as-on { background: #8ea9db; }
+.du-table tr.du-strong td.du-today { background: #a9d08e; }
+.du-table tr.du-strong td.du-total { background: #f4b183; }
+.du-table tr.du-grand td:first-child { text-align: center; }
+.du-table tr.du-gap td { height: 16px; padding: 0; border-left: 0; border-right: 0; background: transparent; }
+.du-note { color: #9a6a1f; font-weight: 600; }

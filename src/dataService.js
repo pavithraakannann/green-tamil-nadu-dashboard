@@ -145,6 +145,7 @@ async function fetchDashboardPayload(forceRefresh, token) {
     warning: typeof payload.warning === "string" ? payload.warning : "",
     targets: validTargets(payload.targets) ? payload.targets : null,
     palmTargets: validPalmTargets(payload.palmTargets) ? payload.palmTargets : null,
+    progress: payload.progress && Array.isArray(payload.progress.daap) && Array.isArray(payload.progress.apo) ? payload.progress : null,
   };
 }
 

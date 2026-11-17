@@ -57,6 +57,7 @@ const NAV_ITEMS = [
   { id: "palm", label: "Palm data", icon: TreePine },
   { id: "gov-departments", label: "Govt departments", icon: Building2 },
   { id: "targets", label: "Targets", icon: Target },
+  { id: "progress", label: "Progress", icon: TrendingUp },
   { id: "reports", label: "Reports", icon: FileBarChart },
 ];
 const FILTER_FIELDS = ["District", "Circle", "Division", "Year", "Species", "Scheme"];
@@ -1486,7 +1487,189 @@ function TargetMatrix({ targets, groupIds, district, year }) {
   );
 }
 
-/** Admin page: target vs geotagged by department and by district. */
+/** dd-mm-yyyy from a YYYY-MM-DD day. */
+function dayLabel(day, separator = "-") {
+  if (!day) return "";
+  const [year, month, date] = day.split("-");
+  return [date, month, year].join(separator);
+}
+
+const PROGRESS_COLORS = {
+  head: "FFE2EFEA", asOnHead: "FF9DC3E6", todayHead: "FFA9D08E", totalHead: "FFF4B183",
+  asOn: "FFDDE5F4", today: "FFE2EFDA", total: "FFFCE4D6",
+  asOnStrong: "FF8EA9DB", todayStrong: "FFA9D08E", totalStrong: "FFF4B183",
+};
+
+function progressHeaders(progress) {
+  return {
+    asOn: progress.baselineDay ? `Geotagged as on ${dayLabel(progress.baselineDay)}` : "Geotagged as on yesterday",
+    today: `Today geotagged ${dayLabel(progress.today)}`,
+  };
+}
+
+/** The daily update sheet in Excel, same layout and colours as the page. */
+function addProgressSheet(workbook, progress) {
+  const sheet = workbook.addWorksheet("Daily update", { views: [{ showGridLines: false }] });
+  const labels = progressHeaders(progress);
+  const thin = { style: "thin", color: { argb: "FF7F8C84" } };
+  const border = { top: thin, left: thin, bottom: thin, right: thin };
+  sheet.mergeCells(1, 1, 1, 6);
+  Object.assign(sheet.getCell(1, 1), {
+    value: `Daily update as on ${dayLabel(progress.today, "/")}`,
+    font: { bold: true, size: 15 }, alignment: { horizontal: "center", vertical: "middle" }, border,
+  });
+  sheet.getRow(1).height = 28;
+  const head = (row, title, targetLabel) => {
+    [["S.No.", PROGRESS_COLORS.head], [title, PROGRESS_COLORS.head], [targetLabel, PROGRESS_COLORS.head], [labels.asOn, PROGRESS_COLORS.asOnHead], [labels.today, PROGRESS_COLORS.todayHead], ["Total Geotagged", PROGRESS_COLORS.totalHead]]
+      .forEach(([text, color], index) => Object.assign(sheet.getCell(row, index + 1), {
+        value: text, font: { bold: true, size: 12 }, fill: excelFill(color),
+        alignment: { horizontal: "center", vertical: "middle", wrapText: true }, border,
+      }));
+    sheet.getRow(row).height = 36;
+  };
+  const line = (row, values, options = {}) => {
+    values.forEach((value, index) => Object.assign(sheet.getCell(row, index + 1), {
+      value: value ?? "",
+      numFmt: typeof value === "number" && index >= 2 ? EXCEL_INDIAN_NUMBER : undefined,
+      font: { size: 12, bold: options.bold ?? (index === 1 || index === 2), italic: options.italic ?? false },
+      fill: index === 3 ? excelFill(options.strong ? PROGRESS_COLORS.asOnStrong : PROGRESS_COLORS.asOn)
+        : index === 4 ? excelFill(options.strong ? PROGRESS_COLORS.todayStrong : PROGRESS_COLORS.today)
+          : index === 5 ? excelFill(options.strong ? PROGRESS_COLORS.totalStrong : PROGRESS_COLORS.total) : undefined,
+      alignment: { horizontal: index === 0 ? "center" : index === 1 ? (options.italic ? "center" : "left") : "right", vertical: "middle" },
+      border,
+    }));
+    sheet.getRow(row).height = 22;
+  };
+  head(2, "DAAP Component", "DAAP Target");
+  let row = 3;
+  let number = 0;
+  for (const item of progress.daap) {
+    if (item.sub) line(row, ["", item.name, "", item.asOn, item.today, item.total], { italic: true, bold: false });
+    else line(row, [++number, item.name, item.target || "", item.asOn, item.today, item.total], { strong: item.id === "overall" });
+    row += 1;
+  }
+  row += 1;
+  head(row, "APO Component", "APO target");
+  row += 1;
+  progress.apo.forEach((item, index) => { line(row, [index + 1, item.name, item.target, item.asOn, item.today, item.total], { bold: false }); row += 1; });
+  const sum = (field) => (progress.apo.some((item) => item[field] === null) ? null : progress.apo.reduce((total, item) => total + item[field], 0));
+  line(row, ["", "Grand total", sum("target"), sum("asOn"), sum("today"), sum("total")], { bold: true, strong: true });
+  sheet.mergeCells(row + 2, 1, row + 2, 6);
+  Object.assign(sheet.getCell(row + 2, 1), {
+    value: `Fruit Bearing species: ${progress.fruitSpecies.join(", ")}.\nAgroforestry species: ${progress.agroforestrySpecies.join(", ")}.\nPalmyrah is all 2026-2027 palm: GTM (Forest Department and other departments) + Udhavi.`,
+    font: { italic: true, size: 9, color: { argb: "FF6B7A6F" } }, alignment: { wrapText: true, vertical: "top" },
+  });
+  sheet.getRow(row + 2).height = 70;
+  [8, 36, 16, 20, 20, 18].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
+  sheet.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+}
+
+/** DAAP and APO (species) target vs geotagged, in the layout of the mission's daily update sheet. */
+function ProgressAbstract({ progress }) {
+  const labels = progressHeaders(progress);
+  const show = (value) => (value === null || value === undefined ? "—" : formatNumber(value));
+  const sum = (field) => (progress.apo.some((item) => item[field] === null) ? null : progress.apo.reduce((total, item) => total + item[field], 0));
+  const headRow = (title, targetLabel) => (
+    <tr className="du-head">
+      <th className="du-sno">S.No.</th><th>{title}</th><th className="num">{targetLabel}</th>
+      <th className="num du-as-on">{labels.asOn}</th><th className="num du-today">{labels.today}</th><th className="num du-total">Total Geotagged</th>
+    </tr>
+  );
+  const values = (item) => (
+    <>
+      <td className="num du-as-on">{show(item.asOn)}</td>
+      <td className="num du-today">{show(item.today)}</td>
+      <td className="num du-total">{show(item.total)}</td>
+    </>
+  );
+  let number = 0;
+  return (
+    <section className="report-table-card daily-update">
+      <div className="table-scroll">
+        <table className="du-table">
+          <tbody>
+            {headRow("DAAP Component", "DAAP Target")}
+            {progress.daap.map((item) => (item.sub ? (
+              <tr key={item.id} className="du-sub"><td /><td>{item.name}</td><td />{values(item)}</tr>
+            ) : (
+              <tr key={item.id} className={item.id === "overall" ? "du-strong" : ""}>
+                <td className="du-sno">{++number}</td>
+                <td className="du-name">{item.name}</td>
+                <td className="num du-target">{item.target ? formatNumber(item.target) : ""}</td>
+                {values(item)}
+              </tr>
+            )))}
+            <tr className="du-gap"><td colSpan={6} /></tr>
+            {headRow("APO Component", "APO target")}
+            {progress.apo.map((item, index) => (
+              <tr key={item.id}>
+                <td className="du-sno">{index + 1}</td>
+                <td title={item.note}>{item.name}</td>
+                <td className="num">{formatNumber(item.target)}</td>
+                {values(item)}
+              </tr>
+            ))}
+            <tr className="du-strong du-grand">
+              <td colSpan={2}>Grand total</td>
+              <td className="num du-target">{formatNumber(sum("target"))}</td>
+              {values({ asOn: sum("asOn"), today: sum("today"), total: sum("total") })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {progress.udhaviError && <p className="tm-footnote du-note">Udhavi data could not be loaded ({progress.udhaviError}). Click “Refresh data” to try again.</p>}
+      <p className="tm-footnote">
+        Total Geotagged is till date for {progress.year}. Today = records with Date {dayLabel(progress.today)}; Geotagged as on {dayLabel(progress.baselineDay)} = Total − Today. Udhavi has no dates, so its Today is not shown. APO rows are counted by species.<br />
+        Fruit Bearing species: {progress.fruitSpecies.join(", ")}.<br />
+        Agroforestry species: {progress.agroforestrySpecies.join(", ")}.<br />
+        Palmyrah is all 2026-2027 palm: GTM (Forest Department and other departments) + Udhavi.
+      </p>
+    </section>
+  );
+}
+
+/** Admin page: the daily update (DAAP and APO progress). */
+function ProgressPage({ progress }) {
+  const [exporting, setExporting] = useState(false);
+  if (!progress) {
+    return (
+      <>
+        <SectionHeading eyebrow="Progress" title="Daily update" description="Progress is not available from the server yet." />
+        <div className="empty-chart"><TrendingUp size={24} /><span>Click “Refresh data” to load it.</span></div>
+      </>
+    );
+  }
+
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      const workbook = await newWorkbook();
+      addProgressSheet(workbook, progress);
+      await saveWorkbook(workbook, `daily-update-${progress.today}`);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <>
+      <SectionHeading
+        eyebrow={`Progress ${progress.year}`}
+        title={`Daily update as on ${dayLabel(progress.today, "/")}`}
+        description={`DAAP and APO targets for ${progress.year}: geotagged as on the previous day, today, and total till date.`}
+        action={(
+          <button className="button button-primary" onClick={exportExcel} disabled={exporting}>
+            <Download size={16} /> {exporting ? "Preparing…" : "Export Excel"}
+          </button>
+        )}
+      />
+      <ProgressAbstract progress={progress} />
+    </>
+  );
+}
+
 function TargetsPage({ targets }) {
   const [groupId, setGroupId] = useState("all");
   const [district, setDistrict] = useState("all");
@@ -1808,24 +1991,16 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
           )}
         </div>
       )}
-      <div className="gov-abstract-tables">
-        {isAll ? (
-          <AbstractTable
-            title="Department-wise abstract"
-            subtitle="Click a department to open its dashboard."
-            label="Government department"
-            groups={departments}
-            onSelect={setDepartment}
-          />
-        ) : (
+      {!isAll && (
+        <div className="gov-abstract-tables">
           <AbstractTable
             title="District-wise abstract"
             subtitle={`Seedlings reported for ${departmentTitle} by district.`}
             label="District"
             groups={byDistrict}
           />
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 }
@@ -3188,6 +3363,7 @@ function Dashboard({ session, onLogout }) {
   const [mapState, setMapState] = useState({ status: "idle", points: [], available: true, error: "" });
   const [targets, setTargets] = useState(null);
   const [palmTargets, setPalmTargets] = useState(null);
+  const [progressReport, setProgressReport] = useState(null);
   const hasDataRef = useRef(false);
   const syncInProgressRef = useRef(false);
 
@@ -3211,6 +3387,7 @@ function Dashboard({ session, onLogout }) {
       setSyncWarning(loaded.warning);
       setTargets(loaded.targets);
       setPalmTargets(loaded.palmTargets);
+      setProgressReport(loaded.progress);
       // Reload map points after a manual refresh, or when the old cache had no map data yet.
       setMapState((current) => (
         current.status === "ready" && (forceRefresh || !current.available)
@@ -3477,6 +3654,7 @@ function Dashboard({ session, onLogout }) {
             />
           )}
           {isAdmin && activePage === "targets" && <TargetsPage targets={targets} />}
+          {isAdmin && activePage === "progress" && <ProgressPage progress={progressReport} />}
           {isAdmin && activePage === "planting-map" && (
             <MapPage rows={allRows} mapState={mapState} onRetry={loadMapPoints} isAdmin={isAdmin} />
           )}
