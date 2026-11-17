@@ -92,6 +92,8 @@ export function buildTargetReport(payload, session, targets = targetFile) {
       group.columns.reduce((total, column) => total + (columnTargets[column] ?? 0), 0),
     ])),
     achieved: Object.fromEntries(groups.map((group) => [group.id, 0])),
+    // Each target-sheet column on its own (a group like RD&PR combines DRDA and MGNREGS).
+    columnTargets: Object.fromEntries(groups.flatMap((group) => group.columns.map((column) => [column, columnTargets[column] ?? 0]))),
   }));
   const byKey = new Map(districts.map((entry) => [entry.key, entry]));
   const unmatched = new Map();
@@ -121,7 +123,7 @@ export function buildTargetReport(payload, session, targets = targetFile) {
     year: targets.year,
     sourceFile: targets.sourceFile,
     groups: groups.map(({ id, label, columns }) => ({ id, label, columns })),
-    districts: districts.map(({ district, key, targets: groupTargets, achieved }) => ({ district, key, targets: groupTargets, achieved })),
+    districts: districts.map(({ district, key, targets: groupTargets, achieved, columnTargets }) => ({ district, key, targets: groupTargets, achieved, columnTargets })),
     // Government department name (capitals) -> target group, so pages can find a department's targets.
     govGroups,
     unmatchedDistricts: [...unmatched].map(([district, achieved]) => ({ district, achieved })),

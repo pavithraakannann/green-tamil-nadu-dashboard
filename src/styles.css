@@ -748,3 +748,34 @@ td.strong { color: var(--ink); font-weight: 700; }
   .dept-matrix .sticky-circle { position: static; }
   .dept-matrix .sticky-district { left: 0; }
 }
+
+/* Targets: district x department matrix (Target / Geotagged per department) */
+.target-matrix-card { margin-bottom: 18px; }
+.target-matrix-card .dept-matrix-scroll { max-height: 720px; }
+.target-matrix thead tr:first-child th { top: 0; }
+.target-matrix thead tr.tm-sub th { top: 52px; font-size: 11.5px; font-weight: 600; color: #4d6253; background: #f3f7f4; }
+.target-matrix th.tm-group { height: 52px; min-width: 150px; max-width: 190px; padding: 8px 10px; text-align: center; white-space: normal; line-height: 1.25; font-size: 12px; color: #fff; background: #23744a; border-left: 1px solid #ffffff55; }
+.target-matrix th.tm-group.tm-total { background: #17573a; }
+.target-matrix thead th.tm-sno, .target-matrix thead th.tm-district { color: #fff; background: #1e6a43; vertical-align: middle; z-index: 4; }
+.target-matrix .tm-sno { left: 0; width: 46px; min-width: 46px; max-width: 46px; text-align: center; color: #6b7a6f; }
+.target-matrix .tm-district { left: 46px; min-width: 150px; box-shadow: 1px 0 0 #dfe7e1; font-weight: 600; }
+.target-matrix .tm-split { border-left: 1px solid #e3ebe5; }
+.target-matrix td.num { min-width: 78px; }
+.target-matrix td.tm-geo { font-weight: 700; }
+.target-matrix td.tone-text-done { color: #1f7a48; }
+.target-matrix td.tone-text-mid { color: #b37b2d; }
+.target-matrix td.tone-text-low { color: #c0573f; }
+.target-matrix td.tone-text-none { color: #6b7a6f; font-weight: 600; }
+.target-matrix tbody tr:not(.totals-row):hover td { background: #f7fbf8; }
+.target-matrix tr.totals-row td { position: sticky; bottom: 0; z-index: 1; }
+.target-matrix tr.totals-row td.sticky-col { z-index: 2; }
+@media (max-width: 700px) {
+  .target-matrix .tm-sno { display: none; }
+  .target-matrix .tm-district { left: 0; }
+}
+
+.tm-footnote { margin: 0; padding: 10px 18px 14px; color: var(--muted, #6b7a6f); font-size: 12px; }
+.target-matrix thead tr.tm-sub th { white-space: normal; line-height: 1.25; min-width: 84px; }
+.target-matrix thead { position: sticky; top: 0; z-index: 3; }
+.target-matrix thead th, .target-matrix thead tr.tm-sub th, .target-matrix thead tr:first-child th { position: static; }
+.target-matrix thead th.sticky-col { position: sticky; }
