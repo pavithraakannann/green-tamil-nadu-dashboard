@@ -15,6 +15,8 @@ const SAFE_DIMENSIONS = [
   "Gov Department Type",
 ];
 const SEEDLING_COLUMNS = ["Seedlings", "Number of Seedlings"];
+// A smaller second aggregate for the bag size / species page (no dates, so it stays compact).
+const BAG_DIMENSIONS = ["District", "Division", "Year", "Species", "Scheme", "Department", "Department Type", "Bag Type"];
 // Map points carry only these labels, never names, phone numbers or addresses.
 const POINT_FIELDS = ["Year", "District", "Division", "Department", "Gov Department Type", "Department Type"];
 // Coordinates are stored as integers of 1e-4 degrees (about 11 m), merging plantings at the same spot.
@@ -56,6 +58,9 @@ function createAggregator(source) {
   let pointDictionaries = [];
   let points = new Map();
   let pointsExcluded = 0;
+  let bagDimensions = [];
+  let bagIndexes = [];
+  let bagGroups = new Map();
 
   function parseCoordinate(value) {
     const text = String(value ?? "").trim();
@@ -138,6 +143,10 @@ function createAggregator(source) {
     pointFields = POINT_FIELDS.filter((field) => sourceHeaders.has(field.toLocaleLowerCase()));
     pointFieldIndexes = pointFields.map((field) => sourceHeaders.get(field.toLocaleLowerCase()));
     pointDictionaries = pointFields.map(() => new Map());
+    if (sourceHeaders.has("bag type")) {
+      bagDimensions = BAG_DIMENSIONS.filter((field) => sourceHeaders.has(field.toLocaleLowerCase()));
+      bagIndexes = bagDimensions.map((field) => sourceHeaders.get(field.toLocaleLowerCase()));
+    }
   }
 
   function addRow(values, rowNumber) {
@@ -167,6 +176,14 @@ function createAggregator(source) {
     }
     groups.set(key, group);
     if (latitudeIndex !== undefined && longitudeIndex !== undefined) addPoint(values, seedlings);
+    if (bagIndexes.length) {
+      const bagValues = bagIndexes.map((index) => String(values[index] ?? "").trim());
+      const bagKey = JSON.stringify(bagValues);
+      const bag = bagGroups.get(bagKey) ?? { values: bagValues, seedlings: 0, records: 0 };
+      bag.seedlings += seedlings;
+      bag.records += 1;
+      bagGroups.set(bagKey, bag);
+    }
   }
 
   function finish() {
@@ -180,12 +197,18 @@ function createAggregator(source) {
     ]);
     groups = new Map();
     const mapPoints = finishPoints();
+    const bags = bagIndexes.length ? {
+      headers: [...bagDimensions, "Seedlings", "Record Count"],
+      rows: [...bagGroups.values()].map(({ values, seedlings, records }) => [...values, String(seedlings), String(records)]),
+    } : null;
+    bagGroups = new Map();
     return {
       source,
       fileName: `${source}.csv · aggregated`,
       headers,
       rows,
       ...(mapPoints ? { points: mapPoints } : {}),
+      ...(bags ? { bags } : {}),
     };
   }
 

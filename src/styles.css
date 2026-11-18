@@ -826,3 +826,35 @@ td.strong { color: var(--ink); font-weight: 700; }
 .du-table tr.du-grand td:first-child { text-align: center; }
 .du-table tr.du-gap td { height: 16px; padding: 0; border-left: 0; border-right: 0; background: transparent; }
 .du-note { color: #9a6a1f; font-weight: 600; }
+
+/* Bag size & species page */
+.bag-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .bag-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .bag-stats { grid-template-columns: 1fr; } }
+.bag-table, .bag-species-table { margin-bottom: 18px; }
+.bag-table td.strong, .bag-species td.strong { font-weight: 700; }
+.bag-species-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.segmented { display: inline-flex; padding: 3px; border: 1px solid #dfe7e1; border-radius: 10px; background: #f3f7f4; }
+.segmented button { padding: 7px 12px; border: 0; border-radius: 8px; color: #4d6253; font: inherit; font-size: 12.5px; font-weight: 600; background: transparent; cursor: pointer; }
+.segmented button.active { color: #fff; background: #23744a; box-shadow: 0 1px 3px rgba(20, 60, 40, .2); }
+.bag-group-select { min-width: 170px; }
+.bag-search { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #dfe7e1; border-radius: 10px; color: #6b7a6f; background: #fff; }
+.bag-search input { width: 150px; border: 0; outline: 0; font: inherit; font-size: 13px; background: transparent; }
+.bag-species th, .bag-species td { white-space: nowrap; }
+.bag-species thead th { position: sticky; top: 0; z-index: 2; }
+.bag-species thead th.num { white-space: normal; min-width: 92px; line-height: 1.25; }
+.bag-species .bag-rank { width: 44px; text-align: center; color: #6b7a6f; }
+.bag-species td.bag-total-col, .bag-species th.bag-total-col { font-weight: 700; }
+.bag-species td.dept-zero, .bag-table td.dept-zero { color: #b5c0b8; }
+
+.target-matrix .tm-pct { min-width: 64px; font-weight: 700; font-size: 12.5px; }
+
+
+/* Seedlings by location: visible grid lines, circle merged over its districts */
+.location-table table { border-collapse: collapse; }
+.location-table th, .location-table td { border: 1px solid #d3ded6; }
+.location-table thead th { border-color: #2f7f55; }
+.location-table tbody tr.circle-end td { border-bottom: 2px solid #9fbfaa; }
+.report-table-card.location-table tbody td.merged-circle { vertical-align: middle; font-weight: 700; color: #1f3326; background: #f6faf7; border-bottom: 2px solid #9fbfaa; }
+.report-table-card.location-table tbody td.loc-district { font-weight: 500; color: #4d6253; padding-left: 18px; }
+.location-table tbody tr:hover td.merged-circle { background: #f6faf7; }

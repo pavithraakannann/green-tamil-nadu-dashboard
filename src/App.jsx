@@ -19,6 +19,7 @@ import {
   LogOut,
   MapPin,
   MapPinned,
+  Package,
   Menu,
   RefreshCw,
   Search,
@@ -27,10 +28,8 @@ import {
   Target,
   TreePine,
   TrendingUp,
-  Upload,
   X,
 } from "lucide-react";
-import Papa from "papaparse";
 import {
   Area,
   AreaChart,
@@ -52,8 +51,7 @@ import { districtKey } from "../backend/src/districtNames.js";
 
 const NAV_ITEMS = [
   { id: "overview", label: "Overview", icon: BarChart3 },
-  { id: "planting-map", label: "Planting map", icon: MapPinned },
-  { id: "merge", label: "Merge data", icon: Table2 },
+  { id: "bag-species", label: "Bag size & species", icon: Package },
   { id: "palm", label: "Palm data", icon: TreePine },
   { id: "gov-departments", label: "Govt departments", icon: Building2 },
   { id: "targets", label: "Targets", icon: Target },
@@ -81,8 +79,6 @@ const COLORS = ["#248451", "#69a879", "#d99545", "#5784a5", "#9d75b6", "#d16d52"
 const ROWS_PER_PAGE = 25;
 const NUMERIC_COLUMNS = new Set(["Seedlings", "Number of Seedlings", "Record Count"]);
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v2";
-const LEGACY_DISTRICT_TARGETS_STORAGE_KEY = "green-tamil-nadu-district-targets-v1";
 const SESSION_STORAGE_KEY = "green-tamil-nadu-session-v1";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
@@ -154,80 +150,6 @@ function dateKey(date) {
 
 function normalizeDistrictName(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
-}
-
-function loadDistrictTargets(rows) {
-  try {
-    const saved = window.localStorage.getItem(DISTRICT_TARGETS_STORAGE_KEY);
-    if (!saved) {
-      const legacySaved = window.localStorage.getItem(LEGACY_DISTRICT_TARGETS_STORAGE_KEY);
-      if (!legacySaved) return { targetsByYear: {}, error: "" };
-      const legacyTargetsByYear = JSON.parse(legacySaved);
-      if (
-        !legacyTargetsByYear
-        || typeof legacyTargetsByYear !== "object"
-        || Array.isArray(legacyTargetsByYear)
-      ) {
-        throw new Error("Saved target data has an invalid format.");
-      }
-
-      const migratedTargetsByYear = {};
-      for (const [year, yearTargets] of Object.entries(legacyTargetsByYear)) {
-        if (!yearTargets || typeof yearTargets !== "object" || Array.isArray(yearTargets)) {
-          throw new Error("Saved district targets have an invalid format.");
-        }
-        migratedTargetsByYear[year] = {};
-        for (const [districtKey, target] of Object.entries(yearTargets)) {
-          if (typeof target !== "number" || !Number.isFinite(target) || target < 0) {
-            throw new Error("A saved district target is invalid.");
-          }
-          const matchingSource = rows.find(({ dataset, row }) => (
-            normalizeDistrictName(valueAt(dataset, row, "District")) === districtKey
-          ));
-          migratedTargetsByYear[year][districtKey] = {
-            district: matchingSource
-              ? valueAt(matchingSource.dataset, matchingSource.row, "District")
-              : districtKey,
-            circle: matchingSource
-              ? valueAt(matchingSource.dataset, matchingSource.row, "Circle") || "Others"
-              : "Others",
-            target,
-          };
-        }
-      }
-      window.localStorage.setItem(DISTRICT_TARGETS_STORAGE_KEY, JSON.stringify(migratedTargetsByYear));
-      return { targetsByYear: migratedTargetsByYear, error: "" };
-    }
-
-    const targetsByYear = JSON.parse(saved);
-    if (!targetsByYear || typeof targetsByYear !== "object" || Array.isArray(targetsByYear)) {
-      throw new Error("Saved target data has an invalid format.");
-    }
-    for (const yearTargets of Object.values(targetsByYear)) {
-      if (!yearTargets || typeof yearTargets !== "object" || Array.isArray(yearTargets)) {
-        throw new Error("Saved district targets have an invalid format.");
-      }
-      for (const target of Object.values(yearTargets)) {
-        if (
-          !target
-          || typeof target !== "object"
-          || typeof target.district !== "string"
-          || typeof target.circle !== "string"
-          || typeof target.target !== "number"
-          || !Number.isFinite(target.target)
-          || target.target < 0
-        ) {
-          throw new Error("A saved district target is invalid.");
-        }
-      }
-    }
-    return { targetsByYear, error: "" };
-  } catch (error) {
-    return {
-      targetsByYear: {},
-      error: `Saved targets could not be loaded: ${error.message}`,
-    };
-  }
 }
 
 function csvEscape(value) {
@@ -832,7 +754,7 @@ function progressTone(percent) {
   return "low";
 }
 
-/** Forest Department district targets (uploaded on the Forest Department page) against seedlings reported. */
+/** Forest Department district targets (from the target sheet) against seedlings reported. */
 function TargetProgress({ targets, district, onOpenTargets }) {
   const year = targets?.year ?? currentReportingYear();
   const items = useMemo(() => (targets ? targetDistrictRows(targets, ["forest"], district) : [])
@@ -1172,7 +1094,7 @@ function targetMatrixModel(targets, groupIds, district) {
       targetColumns,
       target: (entry) => entry.targets[group.id] ?? 0,
       achieved: (entry) => entry.achieved[group.id] ?? 0,
-      span: targetColumns.length + 1,
+      span: targetColumns.length + 2,
     };
   });
   const rowTotal = (entry, field) => groups.reduce((total, group) => total + group[field](entry), 0);
@@ -1312,7 +1234,7 @@ async function downloadTargetMatrixExcel({ title, subtitle, model, fileName }) {
 function addTargetMatrixSheet(workbook, { title, subtitle, model, sheetName }) {
   const { entries, groups, rowTotal, sumEntries } = model;
   const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", xSplit: 2, ySplit: 4, showGridLines: false }] });
-  const lastColumn = 2 + groups.reduce((total, group) => total + group.span, 0) + 2;
+  const lastColumn = 2 + groups.reduce((total, group) => total + group.span, 0) + 3;
   const border = EXCEL_BORDER;
   const fill = excelFill;
 
@@ -1335,23 +1257,32 @@ function addTargetMatrixSheet(workbook, { title, subtitle, model, sheetName }) {
     sheet.mergeCells(3, column, 3, column + group.span - 1);
     head(3, column, group.label, "FF23744A");
     group.targetColumns.forEach((target, index) => head(4, column + index, target.label, "FFF3F7F4", "FF4D6253"));
-    head(4, column + group.span - 1, "Geotagged", "FFF3F7F4", "FF4D6253");
+    head(4, column + group.span - 2, "Geotagged", "FFF3F7F4", "FF4D6253");
+    head(4, column + group.span - 1, "%", "FFF3F7F4", "FF4D6253");
     column += group.span;
   }
-  sheet.mergeCells(3, column, 3, column + 1);
+  sheet.mergeCells(3, column, 3, column + 2);
   head(3, column, "Total", "FF17573A");
   head(4, column, "Target", "FFE3EEE6", "FF4D6253");
   head(4, column + 1, "Geotagged", "FFE3EEE6", "FF4D6253");
+  head(4, column + 2, "%", "FFE3EEE6", "FF4D6253");
   sheet.getRow(3).height = 48;
   sheet.getRow(4).height = 30;
 
   const bodyCell = (row, col, cellValue, options = {}) => Object.assign(sheet.getCell(row, col), {
     value: cellValue,
-    numFmt: typeof cellValue === "number" && col > 1 ? EXCEL_INDIAN_NUMBER : undefined,
+    numFmt: options.numFmt ?? (typeof cellValue === "number" && col > 1 ? EXCEL_INDIAN_NUMBER : undefined),
     font: { size: 10, bold: options.bold ?? false, color: { argb: options.color ?? "FF34463A" } },
     fill: options.fill ? fill(options.fill) : undefined,
     alignment: { horizontal: col === 1 ? "center" : col === 2 ? "left" : "right", vertical: "middle" },
     border,
+  });
+  // Achievement % of target ("-" when there is no target).
+  const percentCell = (row, col, achieved, target, options = {}) => bodyCell(row, col, target ? achieved / target : "-", {
+    numFmt: "0.0%",
+    bold: true,
+    color: target ? EXCEL_TONE_COLOR[geotaggedTone(achieved, target)] : "FFB5C0B8",
+    ...options,
   });
   entries.forEach((entry, index) => {
     const row = 5 + index;
@@ -1365,10 +1296,12 @@ function addTargetMatrixSheet(workbook, { title, subtitle, model, sheetName }) {
         col += 1;
       }
       bodyCell(row, col, group.achieved(entry), { bold: true, color: EXCEL_TONE_COLOR[geotaggedTone(group.achieved(entry), group.target(entry))] });
-      col += 1;
+      percentCell(row, col + 1, group.achieved(entry), group.target(entry));
+      col += 2;
     }
     bodyCell(row, col, rowTotal(entry, "target"), { bold: true, fill: "FFF5F9FC" });
     bodyCell(row, col + 1, rowTotal(entry, "achieved"), { bold: true, fill: "FFF5F9FC" });
+    percentCell(row, col + 2, rowTotal(entry, "achieved"), rowTotal(entry, "target"), { fill: "FFF5F9FC" });
   });
   const totalRow = 5 + entries.length;
   const totalStyle = { bold: true, color: "FF1F3326", fill: "FFE7F0F6" };
@@ -1378,9 +1311,13 @@ function addTargetMatrixSheet(workbook, { title, subtitle, model, sheetName }) {
   for (const group of groups) {
     for (const target of group.targetColumns) bodyCell(totalRow, col++, sumEntries(target.get), totalStyle);
     bodyCell(totalRow, col++, sumEntries(group.achieved), totalStyle);
+    percentCell(totalRow, col++, sumEntries(group.achieved), sumEntries(group.target), totalStyle);
   }
-  bodyCell(totalRow, col, sumEntries((entry) => rowTotal(entry, "target")), { ...totalStyle, fill: "FFFFF2A8" });
-  bodyCell(totalRow, col + 1, sumEntries((entry) => rowTotal(entry, "achieved")), { ...totalStyle, fill: "FFFFF2A8" });
+  const grandTarget = sumEntries((entry) => rowTotal(entry, "target"));
+  const grandAchieved = sumEntries((entry) => rowTotal(entry, "achieved"));
+  bodyCell(totalRow, col, grandTarget, { ...totalStyle, fill: "FFFFF2A8" });
+  bodyCell(totalRow, col + 1, grandAchieved, { ...totalStyle, fill: "FFFFF2A8" });
+  percentCell(totalRow, col + 2, grandAchieved, grandTarget, { ...totalStyle, fill: "FFFFF2A8" });
   sheet.getRow(totalRow).height = 20;
 
   sheet.getColumn(1).width = 6;
@@ -1417,6 +1354,11 @@ function TargetMatrix({ targets, groupIds, district, year }) {
     const tone = geotaggedTone(achieved, target);
     return <td className={`num tm-geo tone-text-${tone}`} title={target ? `${achievementPercent(achieved, target).toFixed(1)}% of target` : "No target"}>{formatNumber(achieved)}</td>;
   };
+  const percentCell = (achieved, target, className = "") => (
+    <td className={`num tm-pct ${target ? `tone-text-${geotaggedTone(achieved, target)}` : "dept-zero"} ${className}`}>
+      {target ? `${achievementPercent(achieved, target).toFixed(1)}%` : "–"}
+    </td>
+  );
 
   return (
     <section className="report-table-card target-matrix-card">
@@ -1434,17 +1376,19 @@ function TargetMatrix({ targets, groupIds, district, year }) {
               <th rowSpan={2} className="sticky-col tm-sno">S.No</th>
               <th rowSpan={2} className="sticky-col tm-district">District</th>
               {groups.map((group) => <th key={group.id} colSpan={group.span} className="tm-group" title={group.label}>{group.label}</th>)}
-              <th colSpan={2} className="tm-group tm-total">Total</th>
+              <th colSpan={3} className="tm-group tm-total">Total</th>
             </tr>
             <tr className="tm-sub">
               {groups.map((group) => (
                 <React.Fragment key={group.id}>
                   {group.targetColumns.map((target, index) => <th key={target.key} className={`num ${index === 0 ? "tm-split" : ""}`}>{target.label}</th>)}
                   <th className="num">Geotagged</th>
+                  <th className="num tm-pct">%</th>
                 </React.Fragment>
               ))}
               <th className="num tm-split tm-total">Target</th>
               <th className="num tm-total">Geotagged</th>
+              <th className="num tm-pct tm-total">%</th>
             </tr>
           </thead>
           <tbody>
@@ -1459,10 +1403,12 @@ function TargetMatrix({ targets, groupIds, district, year }) {
                       return <td key={target.key} className={`num ${columnIndex === 0 ? "tm-split" : ""} ${amount ? "" : "dept-zero"}`}>{formatNumber(amount)}</td>;
                     })}
                     {geoCell(group.achieved(entry), group.target(entry))}
+                    {percentCell(group.achieved(entry), group.target(entry))}
                   </React.Fragment>
                 ))}
                 <td className="num tm-split dept-total-col">{formatNumber(rowTotal(entry, "target"))}</td>
                 <td className="num dept-total-col">{formatNumber(rowTotal(entry, "achieved"))}</td>
+                {percentCell(rowTotal(entry, "achieved"), rowTotal(entry, "target"), "dept-total-col")}
               </tr>
             ))}
             <tr className="totals-row">
@@ -1472,10 +1418,12 @@ function TargetMatrix({ targets, groupIds, district, year }) {
                 <React.Fragment key={group.id}>
                   {group.targetColumns.map((target, index) => <td key={target.key} className={`num ${index === 0 ? "tm-split" : ""}`}>{formatNumber(sumEntries(target.get))}</td>)}
                   <td className="num">{formatNumber(sumEntries(group.achieved))}</td>
+                  {percentCell(sumEntries(group.achieved), sumEntries(group.target))}
                 </React.Fragment>
               ))}
               <td className="num tm-split">{formatNumber(sumEntries((entry) => rowTotal(entry, "target")))}</td>
               <td className="num">{formatNumber(sumEntries((entry) => rowTotal(entry, "achieved")))}</td>
+              {percentCell(sumEntries((entry) => rowTotal(entry, "achieved")), sumEntries((entry) => rowTotal(entry, "target")))}
             </tr>
           </tbody>
         </table>
@@ -1666,6 +1614,331 @@ function ProgressPage({ progress }) {
         )}
       />
       <ProgressAbstract progress={progress} />
+    </>
+  );
+}
+
+/** Bag sizes in size order; anything else follows, and blanks show as "Not specified". */
+const BAG_ORDER = ["Poly bag 8 x 15", "Poly bag 10 x 20", "Poly bag 13 x 25", "Poly bag 16 x 30", "Poly bag 30 x 45", "Eco Friendly / Other Containers", "Nut Dibbling"];
+const BAG_GROUPS = [
+  { key: "forest", label: "Forest Department", short: "Forest" },
+  { key: "other", label: "Other departments", short: "Other depts" },
+  { key: "palm", label: "Palm", short: "Palm" },
+];
+
+function bagSortKey(name) {
+  const index = BAG_ORDER.indexOf(name);
+  return index >= 0 ? index : name === "Not specified" ? 99 : 50;
+}
+
+/** One entry per bag-size row (all datasets), tagged forest / other / palm. */
+function bagEntries(datasets) {
+  const entries = [];
+  for (const dataset of datasets) {
+    const bags = dataset.bags;
+    if (!bags) continue;
+    const index = (name) => bags.headers.indexOf(name);
+    const columns = {
+      district: index("District"), year: index("Year"), species: index("Species"), bag: index("Bag Type"),
+      department: index("Department"), seedlings: index("Seedlings"),
+    };
+    for (const row of bags.rows) {
+      const group = dataset.source === "palm"
+        ? "palm"
+        : String(row[columns.department] ?? "").trim().toLocaleLowerCase("en") === "forest department" ? "forest" : "other";
+      entries.push({
+        group,
+        district: String(row[columns.district] ?? "").trim(),
+        year: String(row[columns.year] ?? "").trim(),
+        species: String(row[columns.species] ?? "").trim() || "Not specified",
+        bag: String(row[columns.bag] ?? "").trim() || "Not specified",
+        seedlings: Number(row[columns.seedlings]) || 0,
+      });
+    }
+  }
+  return entries;
+}
+
+function emptyCounts() {
+  return { forest: 0, other: 0, palm: 0, total: 0 };
+}
+
+function addCount(map, key, entry) {
+  const item = map.get(key) ?? { name: key, ...emptyCounts(), bags: new Map() };
+  item[entry.group] += entry.seedlings;
+  item.total += entry.seedlings;
+  map.set(key, item);
+  return item;
+}
+
+function addExcelTable(workbook, { sheetName, title, subtitle, label, columns, rows, totals }) {
+  const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", xSplit: 2, ySplit: 3, showGridLines: false }] });
+  const headers = ["#", label, ...columns.map((column) => column.label)];
+  excelTitle(sheet, title, subtitle, headers.length);
+  headers.forEach((text, index) => Object.assign(sheet.getCell(3, index + 1), {
+    value: text, font: { bold: true, size: 10, color: { argb: "FFFFFFFF" } },
+    fill: excelFill(index === headers.length - 1 ? "FF17573A" : "FF23744A"),
+    alignment: { horizontal: index < 2 ? (index ? "left" : "center") : "right", vertical: "middle", wrapText: true }, border: EXCEL_BORDER,
+  }));
+  sheet.getRow(3).height = 32;
+  const write = (rowNumber, values, style = {}) => values.forEach((value, index) => Object.assign(sheet.getCell(rowNumber, index + 1), {
+    value,
+    numFmt: typeof value === "number" && index > 1 ? EXCEL_INDIAN_NUMBER : undefined,
+    font: { size: 10, bold: style.bold ?? (index === 1 || index === values.length - 1), color: { argb: value === 0 ? "FFB5C0B8" : "FF34463A" } },
+    fill: style.fill ? excelFill(style.fill) : index === values.length - 1 ? excelFill("FFF5F9FC") : undefined,
+    alignment: { horizontal: index === 0 ? "center" : index === 1 ? "left" : "right", vertical: "middle" }, border: EXCEL_BORDER,
+  }));
+  rows.forEach((row, index) => write(4 + index, [index + 1, row.name, ...columns.map((column) => column.get(row))]));
+  write(4 + rows.length, ["", "Total", ...columns.map((column) => column.get(totals))], { bold: true, fill: "FFE7F0F6" });
+  sheet.getColumn(1).width = 6;
+  sheet.getColumn(2).width = 34;
+  columns.forEach((_, index) => { sheet.getColumn(index + 3).width = 15; });
+  sheet.pageSetup = { orientation: columns.length > 5 ? "landscape" : "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, printTitlesRow: "3:3" };
+}
+
+/** Admin page: geotagged seedlings by bag size and by species, for Forest, other departments and palm. */
+function BagSpeciesPage({ datasets }) {
+  const entries = useMemo(() => bagEntries(datasets), [datasets]);
+  const years = useMemo(() => uniqueSorted(entries.map((entry) => entry.year).filter(Boolean)).reverse(), [entries]);
+  const [year, setYear] = useState(() => currentReportingYear());
+  const [district, setDistrict] = useState("all");
+  const [speciesView, setSpeciesView] = useState("groups");
+  const [bagGroup, setBagGroup] = useState("all");
+  const [query, setQuery] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  const districts = useMemo(() => districtOptions(entries.map((entry) => entry.district).filter(Boolean)), [entries]);
+  const filtered = useMemo(() => entries.filter((entry) => (
+    (year === "all" || entry.year === year)
+    && (district === "all" || cachedDistrictKey(entry.district) === cachedDistrictKey(district))
+  )), [entries, year, district]);
+
+  const { bagRows, speciesRows, totals, bagNames } = useMemo(() => {
+    const byBag = new Map();
+    const bySpecies = new Map();
+    const total = { name: "Total", ...emptyCounts(), bags: new Map() };
+    for (const entry of filtered) {
+      addCount(byBag, entry.bag, entry);
+      const species = addCount(bySpecies, entry.species, entry);
+      const bagCounts = species.bags.get(entry.bag) ?? emptyCounts();
+      bagCounts[entry.group] += entry.seedlings;
+      bagCounts.total += entry.seedlings;
+      species.bags.set(entry.bag, bagCounts);
+      total[entry.group] += entry.seedlings;
+      total.total += entry.seedlings;
+      const totalBag = total.bags.get(entry.bag) ?? emptyCounts();
+      totalBag[entry.group] += entry.seedlings;
+      totalBag.total += entry.seedlings;
+      total.bags.set(entry.bag, totalBag);
+    }
+    const bags = [...byBag.values()].sort((a, b) => bagSortKey(a.name) - bagSortKey(b.name) || b.total - a.total);
+    return {
+      bagRows: bags,
+      speciesRows: [...bySpecies.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
+      totals: total,
+      bagNames: bags.map((bag) => bag.name),
+    };
+  }, [filtered]);
+
+  if (!entries.length) {
+    return (
+      <>
+        <SectionHeading eyebrow="Bag size & species" title="Bag size and species-wise geotagged" description="Bag size data is not available from the server yet." />
+        <div className="empty-chart"><Table2 size={24} /><span>Click “Refresh data” to load it.</span></div>
+      </>
+    );
+  }
+
+  const scope = `${year === "all" ? "All years" : year} · ${district === "all" ? "All districts" : district}`;
+  const bagValue = (row, bag) => {
+    const counts = row.bags.get(bag);
+    return counts ? counts[bagGroup === "all" ? "total" : bagGroup] : 0;
+  };
+  const visibleSpecies = query.trim()
+    ? speciesRows.filter((row) => row.name.toLocaleLowerCase("en").includes(query.trim().toLocaleLowerCase("en")))
+    : speciesRows;
+  const groupColumns = [
+    ...BAG_GROUPS.map((group) => ({ label: group.label, get: (row) => row[group.key] })),
+    { label: "Total", get: (row) => row.total },
+  ];
+  const bagColumns = [
+    ...bagNames.map((bag) => ({ label: bag, get: (row) => bagValue(row, bag) })),
+    { label: "Total", get: (row) => (bagGroup === "all" ? row.total : row[bagGroup]) },
+  ];
+  const bagGroupLabel = bagGroup === "all" ? "All" : BAG_GROUPS.find((group) => group.key === bagGroup).label;
+
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      const workbook = await newWorkbook();
+      addExcelTable(workbook, {
+        sheetName: "Bag size", title: "Bag size-wise geotagged", subtitle: scope,
+        label: "Bag size", columns: groupColumns, rows: bagRows, totals,
+      });
+      addExcelTable(workbook, {
+        sheetName: "Species", title: "Species-wise geotagged", subtitle: scope,
+        label: "Species", columns: groupColumns, rows: speciesRows, totals,
+      });
+      addExcelTable(workbook, {
+        sheetName: "Species x bag size", title: `Species and bag size-wise geotagged · ${bagGroupLabel}`, subtitle: scope,
+        label: "Species", columns: bagColumns, rows: speciesRows, totals,
+      });
+      await saveWorkbook(workbook, `bag-size-species-${year === "all" ? "all-years" : year}`);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const numberCell = (value, strong = false) => (
+    <td className={`num ${strong ? "strong" : ""} ${value ? "" : "dept-zero"}`}>{value ? formatNumber(value) : "-"}</td>
+  );
+
+  return (
+    <>
+      <SectionHeading
+        eyebrow="Bag size & species"
+        title="Bag size and species-wise geotagged"
+        description="Geotagged seedlings by bag size and by species, for the Forest Department, other departments and palm."
+        action={(
+          <button className="button button-primary" onClick={exportExcel} disabled={exporting}>
+            <Download size={16} /> {exporting ? "Preparing…" : "Export Excel"}
+          </button>
+        )}
+      />
+      <div className="report-controls gov-department-filter">
+        <label className="report-selector" htmlFor="bag-year-select">
+          <span>Year</span>
+          <span className="select-wrap report-select">
+            <select id="bag-year-select" value={year} onChange={(event) => setYear(event.target.value)}>
+              <option value="all">All years</option>
+              {years.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        <label className="report-selector" htmlFor="bag-district-select">
+          <span>District</span>
+          <span className="select-wrap report-select">
+            <select id="bag-district-select" value={district} onChange={(event) => setDistrict(event.target.value)}>
+              <option value="all">All districts</option>
+              {districts.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <ChevronDown size={14} />
+          </span>
+        </label>
+        {(district !== "all" || year !== currentReportingYear()) && (
+          <button className="button button-outline" onClick={() => { setYear(currentReportingYear()); setDistrict("all"); }}><FilterX size={15} /> Reset</button>
+        )}
+      </div>
+      <div className="stat-grid bag-stats">
+        <StatCard title="Forest Department" value={formatNumber(totals.forest)} note={scope} icon={TreePine} tone="mint" />
+        <StatCard title="Other departments" value={formatNumber(totals.other)} note="Govt depts, NGOs, Plant-a-Tree & others" icon={Building2} tone="blue" />
+        <StatCard title="Palm" value={formatNumber(totals.palm)} note="Palm data (GTM)" icon={Sprout} tone="gold" />
+        <StatCard title="Total geotagged" value={formatNumber(totals.total)} note={`${formatNumber(speciesRows.length)} species · ${formatNumber(bagRows.length)} bag sizes`} icon={Leaf} />
+      </div>
+
+      <section className="report-table-card bag-table">
+        <div className="report-table-heading">
+          <div><h2>Bag size-wise geotagged</h2><p>{scope}</p></div>
+          <span>{formatNumber(bagRows.length)} bag sizes</span>
+        </div>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Bag size</th>
+                {BAG_GROUPS.map((group) => <th key={group.key} className="num">{group.label}</th>)}
+                <th className="num">Total</th>
+                <th className="num">Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bagRows.map((row) => (
+                <tr key={row.name}>
+                  <td className="strong">{row.name}</td>
+                  {BAG_GROUPS.map((group) => <React.Fragment key={group.key}>{numberCell(row[group.key])}</React.Fragment>)}
+                  {numberCell(row.total, true)}
+                  <td className="num share-cell">
+                    <div className="share-wrap">
+                      <div className="share-bar"><span style={{ width: `${totals.total ? Math.max(2, (row.total / totals.total) * 100) : 0}%` }} /></div>
+                      <em>{totals.total ? `${((row.total / totals.total) * 100).toFixed(1)}%` : "-"}</em>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              <tr className="totals-row">
+                <td>Total</td>
+                {BAG_GROUPS.map((group) => <td key={group.key} className="num">{formatNumber(totals[group.key])}</td>)}
+                <td className="num">{formatNumber(totals.total)}</td>
+                <td className="num">100%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="report-table-card bag-species-table">
+        <div className="report-table-heading">
+          <div>
+            <h2>Species-wise geotagged</h2>
+            <p>{scope} · {speciesView === "groups" ? "by Forest, other departments and palm" : `by bag size · ${bagGroupLabel}`}</p>
+          </div>
+          <div className="bag-species-controls">
+            <div className="segmented" role="group" aria-label="Species table view">
+              <button className={speciesView === "groups" ? "active" : ""} onClick={() => setSpeciesView("groups")}>Forest / Other / Palm</button>
+              <button className={speciesView === "bags" ? "active" : ""} onClick={() => setSpeciesView("bags")}>By bag size</button>
+            </div>
+            {speciesView === "bags" && (
+              <span className="select-wrap report-select bag-group-select">
+                <select value={bagGroup} onChange={(event) => setBagGroup(event.target.value)} aria-label="Show bag sizes for">
+                  <option value="all">All</option>
+                  {BAG_GROUPS.map((group) => <option key={group.key} value={group.key}>{group.label}</option>)}
+                </select>
+                <ChevronDown size={14} />
+              </span>
+            )}
+            <label className="bag-search">
+              <Search size={15} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search species" />
+            </label>
+          </div>
+        </div>
+        <div className="table-scroll dept-matrix-scroll">
+          <table className="bag-species">
+            <thead>
+              <tr>
+                <th className="bag-rank">#</th>
+                <th className="bag-name">Species</th>
+                {(speciesView === "groups" ? groupColumns : bagColumns).map((column, index, list) => (
+                  <th key={column.label} className={`num ${index === list.length - 1 ? "bag-total-col" : ""}`}>{column.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleSpecies.map((row) => (
+                <tr key={row.name}>
+                  <td className="bag-rank">{speciesRows.indexOf(row) + 1}</td>
+                  <td className="bag-name strong">{row.name}</td>
+                  {(speciesView === "groups" ? groupColumns : bagColumns).map((column, index, list) => (
+                    <React.Fragment key={column.label}>{numberCell(column.get(row), index === list.length - 1)}</React.Fragment>
+                  ))}
+                </tr>
+              ))}
+              {!visibleSpecies.length && (
+                <tr><td className="table-empty" colSpan={9}><Search size={23} /><strong>No species found</strong><span>Try another name.</span></td></tr>
+              )}
+              <tr className="totals-row">
+                <td className="bag-rank" />
+                <td className="bag-name">Total ({formatNumber(speciesRows.length)} species)</td>
+                {(speciesView === "groups" ? groupColumns : bagColumns).map((column) => <td key={column.label} className="num">{formatNumber(column.get(totals))}</td>)}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <div className="report-note"><Leaf size={16} /><span>Bag size is the “Bag Type” recorded with each geotagged planting. “Other departments” is every non-Forest record in merge data (government departments, NGOs, Plant-a-Tree and others); Palm is palm data.</span></div>
     </>
   );
 }
@@ -2053,69 +2326,98 @@ function DepartmentBreakdown({ rows, field, title, onSelect }) {
   );
 }
 
-function ForestLocationTable({ rows, selectedYear, targetsByDistrict, circle, district }) {
+function ForestLocationTable({ rows, selectedYear, targetYear, targetsByDistrict, circle, district }) {
   const grouped = useMemo(() => {
     const groups = new Map();
     for (const { dataset, row } of rows) {
-      const circle = valueAt(dataset, row, "Circle") || "Others";
-      const district = valueAt(dataset, row, "District") || "Others";
-      const key = `${circle}\u0000${district}`;
-      const group = groups.get(key) ?? { circle, district, seedlings: 0 };
+      const rowCircle = valueAt(dataset, row, "Circle") || "Others";
+      const rowDistrict = valueAt(dataset, row, "District") || "Others";
+      const key = `${rowCircle}\u0000${districtKey(rowDistrict) || rowDistrict}`;
+      const group = groups.get(key) ?? { circle: rowCircle, district: rowDistrict, key: districtKey(rowDistrict), seedlings: 0 };
       group.seedlings += countAt(dataset, row);
       groups.set(key, group);
     }
-    for (const [districtKey, targetEntry] of Object.entries(targetsByDistrict)) {
-      const key = `${targetEntry.circle}\u0000${districtKey}`;
+    // Districts with a target but no planting records yet still get a row.
+    for (const [targetKey, targetEntry] of Object.entries(targetsByDistrict)) {
+      const key = `${targetEntry.circle}\u0000${targetKey}`;
       if (
         groups.has(key)
         || (circle !== "all" && targetEntry.circle !== circle)
-        || (district !== "all" && districtKey !== normalizeDistrictName(district))
+        || (district !== "all" && targetKey !== districtKey(district))
       ) continue;
-      groups.set(key, {
-        circle: targetEntry.circle,
-        district: targetEntry.district,
-        seedlings: null,
-      });
+      groups.set(key, { circle: targetEntry.circle, district: targetEntry.district, key: targetKey, seedlings: null });
     }
     return [...groups.values()].sort(
       (a, b) => a.circle.localeCompare(b.circle)
         || a.district.localeCompare(b.district),
     );
   }, [rows, targetsByDistrict, circle, district]);
+  // A district's target is shown once, on the row of its main circle.
+  const targetFor = (group) => {
+    const entry = targetsByDistrict[group.key];
+    return entry && entry.circle === group.circle ? entry.target : undefined;
+  };
+  const showTargets = Boolean(targetYear);
+  const targetsApply = showTargets && selectedYear === targetYear;
+  const columnCount = showTargets ? 5 : 3;
   const totalSeedlings = grouped.reduce((total, group) => total + (group.seedlings ?? 0), 0);
+  const totalTarget = grouped.reduce((total, group) => total + (targetFor(group) ?? 0), 0);
   const hasSeedlingRows = grouped.some((group) => group.seedlings !== null);
+  const notApplicable = selectedYear === "all" ? `Select ${targetYear}` : "-";
 
   return (
-    <section className="report-table-card department-breakdown">
+    <section className="report-table-card department-breakdown location-table">
       <div className="report-table-heading">
-        <div><h2>Seedlings by location</h2><p>Circle and district totals for the selected filters.</p></div>
+        <div>
+          <h2>Seedlings by location</h2>
+          <p>Circle and district totals for the selected filters.{showTargets ? ` Targets are the ${targetYear} district targets from the target sheet.` : ""}</p>
+        </div>
         <span>{formatNumber(grouped.length)} locations</span>
       </div>
       <div className="table-scroll">
         <table>
           <thead>
-            <tr><th>Circle</th><th>District</th><th className="num">Seedlings reported</th><th className="num">Target</th></tr>
+            <tr>
+              <th>Circle</th>
+              <th>District</th>
+              <th className="num">Seedlings reported</th>
+              {showTargets && <th className="num">Target {targetYear}</th>}
+              {showTargets && <th className="num">%</th>}
+            </tr>
           </thead>
           <tbody>
-            {grouped.map((group) => {
-              const target = targetsByDistrict[normalizeDistrictName(group.district)];
+            {grouped.map((group, index) => {
+              const target = targetFor(group);
+              // Merge the circle cell over its consecutive district rows.
+              const firstOfCircle = index === 0 || grouped[index - 1].circle !== group.circle;
+              let circleSpan = 1;
+              if (firstOfCircle) while (grouped[index + circleSpan]?.circle === group.circle) circleSpan += 1;
+              const lastOfCircle = grouped[index + 1]?.circle !== group.circle;
 
               return (
-                <tr key={`${group.circle}-${group.district}`}>
-                  <td>{group.circle}</td>
-                  <td>{group.district}</td>
+                <tr key={`${group.circle}-${group.key}-${group.district}`} className={lastOfCircle ? "circle-end" : ""}>
+                  {firstOfCircle && <td rowSpan={circleSpan} className="merged-circle">{group.circle}</td>}
+                  <td className="loc-district">{group.district}</td>
                   <td className="num strong">{group.seedlings === null ? "-" : formatNumber(group.seedlings)}</td>
-                  <td className="num">{selectedYear === "all"
-                    ? "Select a year"
-                    : target === undefined ? "-" : formatNumber(target.target)}</td>
+                  {showTargets && <td className="num">{targetsApply ? (target === undefined ? "-" : formatNumber(target)) : notApplicable}</td>}
+                  {showTargets && (
+                    <td className={`num strong ${targetsApply && target ? `tone-text-${geotaggedTone(group.seedlings ?? 0, target)}` : ""}`}>
+                      {targetsApply && target ? `${achievementPercent(group.seedlings ?? 0, target).toFixed(1)}%` : "-"}
+                    </td>
+                  )}
                 </tr>
               );
             })}
             {!grouped.length && (
-              <tr><td className="table-empty" colSpan={4}><Sprout size={23} /><strong>No location data found</strong><span>Change the filters and try again.</span></td></tr>
+              <tr><td className="table-empty" colSpan={columnCount}><Sprout size={23} /><strong>No location data found</strong><span>Change the filters and try again.</span></td></tr>
             )}
             {hasSeedlingRows && (
-              <tr className="totals-row"><td colSpan={2}>Total seedlings</td><td className="num">{formatNumber(totalSeedlings)}</td><td className="num">—</td></tr>
+              <tr className="totals-row">
+                <td colSpan={2}>Total seedlings</td>
+                <td className="num">{formatNumber(totalSeedlings)}</td>
+                {showTargets && <td className="num">{targetsApply ? formatNumber(totalTarget) : "—"}</td>}
+                {showTargets && <td className="num">{targetsApply && totalTarget ? `${achievementPercent(totalSeedlings, totalTarget).toFixed(1)}%` : "—"}</td>}
+              </tr>
             )}
           </tbody>
         </table>
@@ -2124,17 +2426,17 @@ function ForestLocationTable({ rows, selectedYear, targetsByDistrict, circle, di
   );
 }
 
-function LocationSeedlingDetails({ title, rows, onBack }) {
+/**
+ * District targets for a detail page, from the target sheets already given:
+ * { year, districts: [{ key, district, target }] } or null when there are none.
+ */
+function LocationSeedlingDetails({ title, rows, onBack, targetSource = null }) {
   const [year, setYear] = useState("all");
   const [scheme, setScheme] = useState("all");
   const [species, setSpecies] = useState("all");
   const [circle, setCircle] = useState("all");
   const [district, setDistrict] = useState("all");
   const [division, setDivision] = useState("all");
-  const [targetStorage, setTargetStorage] = useState(() => loadDistrictTargets(rows));
-  const [targetUploadError, setTargetUploadError] = useState("");
-  const [targetUploadMessage, setTargetUploadMessage] = useState("");
-  const targetFileInput = useRef(null);
   const years = useMemo(() => uniqueSorted(rows.map(({ dataset, row }) => valueAt(dataset, row, "Year"))), [rows]);
   const schemes = useMemo(() => uniqueSorted(rows.map(({ dataset, row }) => valueAt(dataset, row, "Scheme"))), [rows]);
   const speciesOptions = useMemo(() => uniqueSorted(rows.map(({ dataset, row }) => speciesAt(dataset, row))), [rows]);
@@ -2144,7 +2446,30 @@ function LocationSeedlingDetails({ title, rows, onBack }) {
     && (scheme === "all" || valueAt(dataset, row, "Scheme") === scheme)
     && (species === "all" || speciesAt(dataset, row) === species)
   )), [rows, year, scheme, species]);
-  const targetsByDistrict = year === "all" ? {} : targetStorage.targetsByYear[year] ?? {};
+  // Circle of each district, taken from the planting records.
+  const circleByDistrict = useMemo(() => {
+    const counts = new Map();
+    for (const { dataset, row } of rows) {
+      const key = districtKey(valueAt(dataset, row, "District"));
+      const rowCircle = valueAt(dataset, row, "Circle");
+      if (!key || !rowCircle) continue;
+      const perCircle = counts.get(key) ?? new Map();
+      perCircle.set(rowCircle, (perCircle.get(rowCircle) ?? 0) + countAt(dataset, row));
+      counts.set(key, perCircle);
+    }
+    // A district planted under several circles belongs to the one with the most seedlings.
+    return new Map([...counts].map(([key, perCircle]) => [key, [...perCircle].sort((x, y) => y[1] - x[1])[0][0]]));
+  }, [rows]);
+  // Targets apply only to the target year (e.g. 2026-2027).
+  const targetsByDistrict = useMemo(() => {
+    if (!targetSource || year !== targetSource.year) return {};
+    const result = {};
+    for (const entry of targetSource.districts) {
+      if (!(entry.target > 0)) continue;
+      result[entry.key] = { district: entry.district, circle: circleByDistrict.get(entry.key) || "Others", target: entry.target };
+    }
+    return result;
+  }, [targetSource, year, circleByDistrict]);
   const circles = useMemo(
     () => uniqueSorted([
       ...attributeRows.map(({ dataset, row }) => valueAt(dataset, row, "Circle")),
@@ -2178,145 +2503,6 @@ function LocationSeedlingDetails({ title, rows, onBack }) {
     [districtRows, division],
   );
   const totalSeedlings = filteredRows.reduce((total, { dataset, row }) => total + countAt(dataset, row), 0);
-  function saveUploadedTargets(fields, data, fileType) {
-    const districtField = fields.find((field) => field.toLocaleLowerCase() === "district");
-    const circleField = fields.find((field) => field.toLocaleLowerCase() === "circle");
-    const targetField = fields.find((field) => field.toLocaleLowerCase() === "target");
-    if (!districtField || !targetField) {
-      setTargetUploadError(`The ${fileType} must include District and Target columns.`);
-      return;
-    }
-    if (!data.length) {
-      setTargetUploadError(`The ${fileType} has no district rows.`);
-      return;
-    }
-
-    const uploadedTargets = {};
-    let rowsWithoutDistrict = 0;
-    for (let index = 0; index < data.length; index += 1) {
-      const row = data[index];
-      const districtName = String(row[districtField] ?? "").trim().replace(/\s+/g, " ");
-      const uploadedCircle = circleField ? String(row[circleField] ?? "").trim().replace(/\s+/g, " ") : "";
-      const targetText = String(row[targetField] ?? "").trim();
-      if (!districtName && !targetText) continue;
-      if (!districtName) {
-        rowsWithoutDistrict += 1;
-        continue;
-      }
-      if (!targetText) continue;
-      const target = Number(targetText.replace(/,/g, ""));
-      if (!Number.isFinite(target) || target < 0) {
-        setTargetUploadError(`Target must be a non-negative number on ${fileType} row ${index + 2}.`);
-        return;
-      }
-      const districtKey = normalizeDistrictName(districtName);
-      if (Object.prototype.hasOwnProperty.call(uploadedTargets, districtKey)) {
-        setTargetUploadError(`District "${districtName}" appears more than once in the ${fileType}.`);
-        return;
-      }
-      const matchingSource = rows.find(({ dataset, row: sourceRow }) => (
-        normalizeDistrictName(valueAt(dataset, sourceRow, "District")) === districtKey
-      ));
-      uploadedTargets[districtKey] = {
-        district: districtName,
-        circle: uploadedCircle
-          || (matchingSource ? valueAt(matchingSource.dataset, matchingSource.row, "Circle") : "")
-          || "Others",
-        target,
-      };
-    }
-    if (!Object.keys(uploadedTargets).length) {
-      setTargetUploadError(`No district targets were found in the ${fileType}. Check that rows include District and Target values.`);
-      return;
-    }
-
-    const nextTargetsByYear = {
-      ...targetStorage.targetsByYear,
-      [year]: uploadedTargets,
-    };
-    try {
-      window.localStorage.setItem(DISTRICT_TARGETS_STORAGE_KEY, JSON.stringify(nextTargetsByYear));
-      setTargetStorage({ targetsByYear: nextTargetsByYear, error: "" });
-      const ignoredRowsMessage = rowsWithoutDistrict
-        ? ` ${rowsWithoutDistrict} row${rowsWithoutDistrict === 1 ? " without" : "s without"} a district name ignored.`
-        : "";
-      setTargetUploadMessage(`${Object.keys(uploadedTargets).length} district targets saved for ${year}.${ignoredRowsMessage} Re-upload for this year to replace them.`);
-    } catch (error) {
-      setTargetUploadError(`Could not save targets in this browser: ${error.message}`);
-    }
-  }
-
-  function handleTargetUpload(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setTargetUploadError("");
-    setTargetUploadMessage("");
-
-    if (year === "all") {
-      setTargetUploadError("Select a year before uploading district targets.");
-      return;
-    }
-    const extension = file.name.toLocaleLowerCase().split(".").pop();
-    if (!["csv", "xlsx", "xls"].includes(extension)) {
-      setTargetUploadError("Upload a CSV or Excel file (.csv, .xlsx, or .xls) with District and Target columns.");
-      return;
-    }
-
-    if (extension === "csv") {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: "greedy",
-        transformHeader: (header) => header.replace(/^\uFEFF/, "").trim(),
-        complete: (result) => {
-          if (result.errors.length) {
-            const firstError = result.errors[0];
-            setTargetUploadError(`Could not read the target CSV: ${firstError.message} (row ${firstError.row + 1}).`);
-            return;
-          }
-          saveUploadedTargets(result.meta.fields ?? [], result.data, "CSV");
-        },
-        error: (error) => {
-          setTargetUploadError(`Unable to read the target CSV: ${error.message}`);
-        },
-      });
-      return;
-    }
-
-    async function readExcelTargets() {
-      try {
-        const XLSX = await import("@e965/xlsx");
-        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) {
-          setTargetUploadError("The Excel workbook does not contain a worksheet.");
-          return;
-        }
-
-        const sheetRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-          header: 1,
-          raw: false,
-          defval: "",
-          blankrows: false,
-        });
-        if (!sheetRows.length) {
-          setTargetUploadError("The first worksheet in the Excel workbook is empty.");
-          return;
-        }
-
-        const fields = sheetRows[0].map((field) => String(field ?? "").replace(/^\uFEFF/, "").trim());
-        const data = sheetRows.slice(1).map((values) => (
-          Object.fromEntries(fields.map((field, index) => [field, values[index] ?? ""]))
-        ));
-        saveUploadedTargets(fields, data, "Excel file");
-      } catch (error) {
-        setTargetUploadError(`Unable to read the Excel file: ${error.message}`);
-      }
-    }
-
-    readExcelTargets();
-  }
-
   function filterControl(label, value, setValue, values, allLabel) {
     return (
       <label className="report-selector forest-filter" key={label}>
@@ -2370,37 +2556,13 @@ function LocationSeedlingDetails({ title, rows, onBack }) {
           setDivision("all");
         }, speciesOptions, "All species")}
       </div>
-      <div className="target-upload-panel">
-        <div>
-          <strong>District targets</strong>
-          <span>Select a year, then upload a CSV or Excel file with District and Target columns. Circle is optional. Excel files use the first worksheet. A new upload replaces targets for that year only.</span>
-          <span>Targets are saved in this browser and stay until replaced by another upload.</span>
-          {(targetStorage.error || targetUploadError) && (
-            <span className="target-upload-message target-upload-error" role="alert">{targetStorage.error || targetUploadError}</span>
-          )}
-          {targetUploadMessage && <span className="target-upload-message" role="status">{targetUploadMessage}</span>}
-        </div>
-        <input
-          ref={targetFileInput}
-          type="file"
-          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-          hidden
-          onChange={handleTargetUpload}
-        />
-        <button
-          className="button button-outline"
-          disabled={year === "all"}
-          onClick={() => targetFileInput.current?.click()}
-        >
-          <Upload size={15} /> Upload targets
-        </button>
-      </div>
       <div className="dataset-summary division-summary">
         <div><span>Filtered seedlings reported</span><strong>{formatNumber(totalSeedlings)}</strong></div>
       </div>
       <ForestLocationTable
         rows={filteredRows}
         selectedYear={year}
+        targetYear={targetSource?.year ?? null}
         targetsByDistrict={targetsByDistrict}
         circle={circle}
         district={district}
@@ -2608,7 +2770,7 @@ function Overview({ summary, chartRows, filters, options, setFilters, onClear, d
       <section className="source-strip">
         <div><span className="source-dot" /><strong>Sources</strong><span>Statistics use aggregated groups; source records and private columns are not sent to the browser.</span></div>
         <div className="source-files">{datasets.map((dataset) => <span key={dataset.source}>{dataset.fileName} <b>{formatNumber(dataset.rows.length)}</b> groups</span>)}</div>
-        <small>Targets come from the district target file uploaded on the Forest Department page.</small>
+        <small>Targets come from the district target sheet.</small>
       </section>
     </>
   );
@@ -3440,7 +3602,7 @@ function Dashboard({ session, onLogout }) {
     }
   }
 
-  const pageNeedsMap = activePage === "planting-map" || activePage === "gov-departments";
+  const pageNeedsMap = activePage === "gov-departments";
   useEffect(() => {
     if (pageNeedsMap && !loading && mapState.status === "idle") loadMapPoints();
   }, [pageNeedsMap, loading, mapState.status]);
@@ -3600,6 +3762,7 @@ function Dashboard({ session, onLogout }) {
                 dataset.source !== "palm"
                 && valueAt(dataset, row, "Department").toLocaleLowerCase() === "forest department"
               ))}
+              targetSource={targets ? { year: targets.year, districts: targets.districts.map((entry) => ({ key: entry.key, district: entry.district, target: entry.targets.forest ?? 0 })) } : null}
               onBack={() => setActivePage("overview")}
             />
           )}
@@ -3607,6 +3770,7 @@ function Dashboard({ session, onLogout }) {
             <LocationSeedlingDetails
               title="Palm seedlings"
               rows={chartRows.filter(({ dataset }) => dataset.source === "palm")}
+              targetSource={palmTargets ? { year: palmTargets.year, districts: palmTargets.districts } : null}
               onBack={() => setActivePage("overview")}
             />
           )}
@@ -3655,12 +3819,7 @@ function Dashboard({ session, onLogout }) {
           )}
           {isAdmin && activePage === "targets" && <TargetsPage targets={targets} />}
           {isAdmin && activePage === "progress" && <ProgressPage progress={progressReport} />}
-          {isAdmin && activePage === "planting-map" && (
-            <MapPage rows={allRows} mapState={mapState} onRetry={loadMapPoints} isAdmin={isAdmin} />
-          )}
-          {isAdmin && activePage === "merge" && merge && (
-            <DatasetPage dataset={merge} rows={merge.filteredRows} title="Merge data" description="Browse privacy-safe aggregated groups from merge.csv. Search, filter and export the public summary data." summary={merge.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} />
-          )}
+          {isAdmin && activePage === "bag-species" && <BagSpeciesPage datasets={datasets} />}
           {isAdmin && activePage === "palm" && palm && (
             <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse privacy-safe aggregated groups from palm.csv with district, circle, division, scheme and year filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} hideTable hideFilters={PALM_HIDDEN_FILTERS}>
               <PalmTargetSection palmTargets={palmTargets} dataset={palm} filters={filters} districtCircles={districtCircles} showStats />

@@ -43,7 +43,10 @@ export function listDepartments(payload) {
  * Map points are left out here; they are served separately by mapPointsForSession.
  */
 export function payloadForSession(payload, session) {
-  const datasets = payload.datasets.map(({ points: _points, ...dataset }) => dataset);
+  // Bag size data is admin-only; department sessions never receive it.
+  const datasets = payload.datasets.map(({ points: _points, bags, ...dataset }) => (
+    session.role === "admin" && bags ? { ...dataset, bags } : dataset
+  ));
   if (session.role === "admin") return { ...payload, datasets };
   return {
     ...payload,
