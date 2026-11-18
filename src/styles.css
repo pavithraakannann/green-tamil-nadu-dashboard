@@ -23,7 +23,7 @@ button { cursor: pointer; }
 .app-shell { min-height: 100vh; }
 .sidebar {
   position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; flex-direction: column;
-  width: 252px; padding: 27px 17px 18px; color: #e9f4eb;
+  width: 210px; padding: 24px 12px 16px; color: #e9f4eb;
   background: linear-gradient(165deg, #173f2c 0%, #154a32 58%, #123e2c 100%);
 }
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; }
@@ -45,7 +45,7 @@ button { cursor: pointer; }
 .sidebar-foot { display: flex; align-items: center; gap: 7px; padding: 18px 5px 0; color: #92ae9c; font-size: 8px; font-weight: 700; letter-spacing: .9px; }
 .sidebar-foot > span:last-child { margin-left: auto; letter-spacing: 0; }
 .sidebar-status, .topbar-source > span, .live-badge > span { width: 7px; height: 7px; border-radius: 50%; background: #79c685; box-shadow: 0 0 0 3px #79c68520; }
-.main-area { min-height: 100vh; margin-left: 252px; }
+.main-area { min-height: 100vh; margin-left: 210px; }
 .topbar { position: sticky; top: 0; z-index: 10; height: 67px; display: flex; align-items: center; justify-content: space-between; padding: 0 35px; border-bottom: 1px solid #e8ede8; background: #ffffffed; backdrop-filter: blur(12px); }
 .breadcrumb { display: flex; align-items: center; gap: 11px; color: #829087; font-size: 11px; }
 .breadcrumb strong { color: #34463a; font-weight: 600; }
@@ -231,8 +231,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .mobile-menu, .mobile-close, .mobile-backdrop { display: none; }
 
 @media (max-width: 1100px) {
-  .sidebar { width: 220px; }
-  .main-area { margin-left: 220px; }
+  .sidebar { width: 196px; }
+  .main-area { margin-left: 196px; }
   .topbar { padding: 0 24px; }
   .page-content { padding: 27px 24px 18px; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -858,3 +858,9 @@ td.strong { color: var(--ink); font-weight: 700; }
 .report-table-card.location-table tbody td.merged-circle { vertical-align: middle; font-weight: 700; color: #1f3326; background: #f6faf7; border-bottom: 2px solid #9fbfaa; }
 .report-table-card.location-table tbody td.loc-district { font-weight: 500; color: #4d6253; padding-left: 18px; }
 .location-table tbody tr:hover td.merged-circle { background: #f6faf7; }
+
+/* Narrow sidebar: keep the brand on one line */
+.brand { gap: 9px; padding: 0 4px; }
+.brand-emblem { width: 34px; height: 34px; flex: none; border-radius: 10px; }
+.brand strong { font-size: 14px; white-space: nowrap; }
+.brand span { font-size: 8px; letter-spacing: 1px; white-space: nowrap; }
