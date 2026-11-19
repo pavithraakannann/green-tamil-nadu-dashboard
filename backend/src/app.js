@@ -23,7 +23,8 @@ async function sessionPayload(payload, session, udhavi, force = false) {
   let progress = null;
   if (session.role === "admin") {
     try {
-      progress = buildProgressReport(filtered, palmTargets?.udhavi);
+      // Unfiltered payload: admins see everything, and it keeps the server-only progressBags.
+      progress = buildProgressReport(payload, palmTargets?.udhavi);
     } catch (error) {
       console.error(`Progress report failed. ${error.message}`);
     }

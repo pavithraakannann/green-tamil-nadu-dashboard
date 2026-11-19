@@ -73,7 +73,14 @@ export function createDashboardService({
           fetchImpl,
         });
         const stream = Readable.fromWeb(downloaded.body);
-        const csvStream = downloaded.compressed ? stream.pipe(createGunzip()) : stream;
+        let csvStream = stream;
+        if (downloaded.compressed) {
+          // pipe() does not forward errors: pass download failures (timeout, connection reset)
+          // on to the gunzip stream so the sync fails cleanly instead of crashing the process.
+          csvStream = createGunzip();
+          stream.on("error", (error) => csvStream.destroy(error));
+          stream.pipe(csvStream);
+        }
         datasets.push(await aggregateCsvStream(csvStream, source));
       }
       const nextCache = {

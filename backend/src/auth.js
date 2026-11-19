@@ -44,7 +44,8 @@ export function listDepartments(payload) {
  */
 export function payloadForSession(payload, session) {
   // Bag size data is admin-only; department sessions never receive it.
-  const datasets = payload.datasets.map(({ points: _points, bags, ...dataset }) => (
+  // progressBags (progress rule totals) stay on the server.
+  const datasets = payload.datasets.map(({ points: _points, progressBags: _progressBags, bags, ...dataset }) => (
     session.role === "admin" && bags ? { ...dataset, bags } : dataset
   ));
   if (session.role === "admin") return { ...payload, datasets };

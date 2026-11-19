@@ -6,15 +6,25 @@ const payload = {
   datasets: [
     {
       source: "merge",
-      headers: ["District", "Year", "Species", "Date", "Seedlings"],
+      headers: ["District", "Year", "Species", "Scheme", "Bag Type", "Date", "Department", "Department Type", "Seedlings"],
       rows: [
-        ["Erode", "2026-2027", "Sandal wood", "2026-11-10", "100"],
-        ["Erode", "2026-2027", "Silver Oak", "2026-11-16", "200"],
-        ["Erode", "2026-2027", "Silver Oak", "2026-11-17", "30"],
-        ["Erode", "2026-2027", "Mango", "2026-11-17", "50"],
-        ["Erode", "2026-2027", "Teak", "2026-10-01", "70"],
-        ["Erode", "2025-2026", "Teak", "2025-10-01", "1000"],
+        ["Erode", "2026-2027", "Sandal wood", "Green Tamil Nadu Mission", "Poly bag 16 x 30", "2026-11-10", "Forest Department", "Forest Department", "100"],
+        ["Erode", "2026-2027", "Silver Oak", "Green Tamil Nadu Mission", "Poly bag 13 x 25", "2026-11-16", "Forest Department", "Forest Department", "200"],
+        ["Erode", "2026-2027", "Silver Oak", "Green Tamil Nadu Mission", "Poly bag 13 x 25", "2026-11-17", "Forest Department", "Forest Department", "30"],
+        ["Erode", "2026-2027", "Mango", "Green Tamil Nadu Mission", "Poly bag 16 x 30", "2026-11-17", "Forest Department", "Forest Department", "50"],
+        ["Erode", "2026-2027", "Teak", "Green Tamil Nadu Mission", "Poly bag 13 x 25", "2026-10-01", "Forest Department", "Forest Department", "70"],
+        ["Erode", "2025-2026", "Teak", "Green Tamil Nadu Mission", "Poly bag 13 x 25", "2025-10-01", "Forest Department", "Forest Department", "1000"],
       ],
+      progressBags: {
+        headers: ["Rule", "Year", "Date", "Seedlings", "Record Count"],
+        rows: [
+          ["sandalwood", "2026-2027", "2026-11-10", "100", "1"],
+          ["silverOak", "2026-2027", "2026-11-16", "200", "1"],
+          ["silverOak", "2026-2027", "2026-11-17", "30", "1"],
+          ["fruit", "2026-2027", "2026-11-17", "50", "1"],
+          ["agroforestry", "2026-2027", "2026-10-01", "70", "1"],
+        ],
+      },
     },
     {
       source: "palm",
@@ -37,9 +47,13 @@ test("progress: today is records dated today (India time); as on = total minus t
   assert.equal(report.baselineDay, "2026-11-16");
   assert.deepEqual(row(report, "planting"), [370, 80, 450]);
   assert.deepEqual(row(report, "overall"), [1370, 80, 1450]);
+  // Silver Oak is counted from bag size data (13 x 25 bag + GTM scheme).
   assert.deepEqual(row(report, "silverOak"), [200, 30, 230]);
+  // Fruit Bearing is counted from bag size data (16 x 30 bag + GTM scheme).
   assert.deepEqual(row(report, "fruit"), [0, 50, 50]);
+  // Agroforestry is counted from bag size data (13 x 25 bag + GTM scheme).
   assert.deepEqual(row(report, "agroforestry"), [70, 0, 70]);
+  // Sandalwood is counted from bag size data (16 x 30 bag + GTM scheme).
   assert.deepEqual(row(report, "sandalwood"), [100, 0, 100]);
   assert.deepEqual(row(report, "palmyrah"), [15, 40, 55]);
   assert.deepEqual(row(report, "palmGtm"), [10, 40, 50]);

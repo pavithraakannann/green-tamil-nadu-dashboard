@@ -1504,7 +1504,7 @@ function addProgressSheet(workbook, progress) {
   line(row, ["", "Grand total", sum("target"), sum("asOn"), sum("today"), sum("total")], { bold: true, strong: true });
   sheet.mergeCells(row + 2, 1, row + 2, 6);
   Object.assign(sheet.getCell(row + 2, 1), {
-    value: `Fruit Bearing species: ${progress.fruitSpecies.join(", ")}.\nAgroforestry species: ${progress.agroforestrySpecies.join(", ")}.\nPalmyrah is all 2026-2027 palm: GTM (Forest Department and other departments) + Udhavi.`,
+    value: `Fruit Bearing species: ${progress.fruitSpecies.join(", ")}.\nAgroforestry: ${progress.agroforestryRule ?? `species ${progress.agroforestrySpecies.join(", ")}`}.\nPalmyrah is all 2026-2027 palm: GTM (Forest Department and other departments) + Udhavi.`,
     font: { italic: true, size: 9, color: { argb: "FF6B7A6F" } }, alignment: { wrapText: true, vertical: "top" },
   });
   sheet.getRow(row + 2).height = 70;
@@ -1569,7 +1569,7 @@ function ProgressAbstract({ progress }) {
       <p className="tm-footnote">
         Total Geotagged is till date for {progress.year}. Today = records with Date {dayLabel(progress.today)}; Geotagged as on {dayLabel(progress.baselineDay)} = Total − Today. Udhavi has no dates, so its Today is not shown. APO rows are counted by species.<br />
         Fruit Bearing species: {progress.fruitSpecies.join(", ")}.<br />
-        Agroforestry species: {progress.agroforestrySpecies.join(", ")}.<br />
+        Agroforestry: {progress.agroforestryRule ?? `species ${progress.agroforestrySpecies.join(", ")}`}.{progress.agroforestryAvailable === false && " Click “Refresh data” to load bag size data."}<br />
         Palmyrah is all 2026-2027 palm: GTM (Forest Department and other departments) + Udhavi.
       </p>
     </section>

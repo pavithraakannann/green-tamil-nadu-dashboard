@@ -1,5 +1,6 @@
 import Papa from "papaparse";
 import { Readable } from "node:stream";
+import { BAG_PROGRESS_RULES } from "./progress.js";
 
 const SAFE_DIMENSIONS = [
   "District",
@@ -61,6 +62,9 @@ function createAggregator(source) {
   let bagDimensions = [];
   let bagIndexes = [];
   let bagGroups = new Map();
+  // Progress rules needing Bag Type: rule id + Year + Date totals only.
+  let ruleIndexes = null;
+  let ruleGroups = new Map();
 
   function parseCoordinate(value) {
     const text = String(value ?? "").trim();
@@ -146,6 +150,13 @@ function createAggregator(source) {
     if (sourceHeaders.has("bag type")) {
       bagDimensions = BAG_DIMENSIONS.filter((field) => sourceHeaders.has(field.toLocaleLowerCase()));
       bagIndexes = bagDimensions.map((field) => sourceHeaders.get(field.toLocaleLowerCase()));
+      ruleIndexes = {
+        bagType: sourceHeaders.get("bag type"),
+        species: sourceHeaders.get("species"),
+        scheme: sourceHeaders.get("scheme"),
+        year: sourceHeaders.get("year"),
+        date: sourceHeaders.get("date"),
+      };
     }
   }
 
@@ -157,6 +168,8 @@ function createAggregator(source) {
     if (values.length !== columnCount) {
       throw new Error(`${source}.csv has an invalid number of columns near line ${rowNumber}.`);
     }
+
+
 
     const safeValues = dimensionIndexes.map((index, dimensionNumber) => {
       const value = String(values[index] ?? "").trim();
@@ -184,6 +197,26 @@ function createAggregator(source) {
       bag.records += 1;
       bagGroups.set(bagKey, bag);
     }
+    if (ruleIndexes) {
+      const fields = {
+        bagType: values[ruleIndexes.bagType],
+        species: ruleIndexes.species === undefined ? "" : values[ruleIndexes.species],
+        scheme: ruleIndexes.scheme === undefined ? "" : values[ruleIndexes.scheme],
+      };
+      for (const rule of BAG_PROGRESS_RULES) {
+        if (!rule.match(fields)) continue;
+        const ruleValues = [
+          rule.id,
+          ruleIndexes.year === undefined ? "" : String(values[ruleIndexes.year] ?? "").trim(),
+          ruleIndexes.date === undefined ? "" : dateOnly(values[ruleIndexes.date]),
+        ];
+        const ruleKey = JSON.stringify(ruleValues);
+        const entry = ruleGroups.get(ruleKey) ?? { values: ruleValues, seedlings: 0, records: 0 };
+        entry.seedlings += seedlings;
+        entry.records += 1;
+        ruleGroups.set(ruleKey, entry);
+      }
+    }
   }
 
   function finish() {
@@ -202,6 +235,11 @@ function createAggregator(source) {
       rows: [...bagGroups.values()].map(({ values, seedlings, records }) => [...values, String(seedlings), String(records)]),
     } : null;
     bagGroups = new Map();
+    const progressBags = ruleIndexes ? {
+      headers: ["Rule", "Year", "Date", "Seedlings", "Record Count"],
+      rows: [...ruleGroups.values()].map(({ values, seedlings, records }) => [...values, String(seedlings), String(records)]),
+    } : null;
+    ruleGroups = new Map();
     return {
       source,
       fileName: `${source}.csv · aggregated`,
@@ -209,6 +247,7 @@ function createAggregator(source) {
       rows,
       ...(mapPoints ? { points: mapPoints } : {}),
       ...(bags ? { bags } : {}),
+      ...(progressBags ? { progressBags } : {}),
     };
   }
 

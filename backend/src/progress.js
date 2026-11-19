@@ -17,7 +17,71 @@ export const AGROFORESTRY_SPECIES = [
 ];
 const lower = (list) => new Set(list.map((name) => name.toLocaleLowerCase("en")));
 const FRUIT_KEYS = lower(FRUIT_SPECIES);
-const AGROFORESTRY_KEYS = lower(AGROFORESTRY_SPECIES);
+
+// Agroforestry is counted by bag size and scheme, not by a species list.
+export const AGROFORESTRY_BAG = "13 x 25";
+export const AGROFORESTRY_EXCLUDED = ["Casuarina", "Mangrove"];
+// Silver Oak and Sandalwood have their own APO rows, so they are not counted again under Agroforestry.
+// These are keywords to match in species names (e.g., "sandal" matches "Sandal wood" and "Sandalwood").
+export const AGROFORESTRY_OWN_ROW_KEYWORDS = ["silver oak", "sandal"];
+export const AGROFORESTRY_SCHEMES = ["Green Tamil Nadu Mission", "Green Tamilnadu Mission - Bio-shields"];
+const AGROFORESTRY_SCHEME_KEYS = lower(AGROFORESTRY_SCHEMES);
+const normalise = (value) => String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
+
+/**
+ * Progress rows that need columns outside the main aggregate (Bag Type). The CSV aggregator
+ * applies these per record and keeps only rule id, Year and Date totals (server-side only).
+ */
+export const BAG_PROGRESS_RULES = [
+  {
+    id: "sandalwood",
+    match: ({ species, scheme, bagType }) => {
+      const name = normalise(species);
+      return /\b16\s*x\s*30\b/.test(normalise(bagType))
+        && name.includes("sandal")
+        && AGROFORESTRY_SCHEME_KEYS.has(normalise(scheme));
+    },
+  },
+  {
+    id: "silverOak",
+    match: ({ species, scheme, bagType }) => {
+      const name = normalise(species);
+      return /\b13\s*x\s*25\b/.test(normalise(bagType))
+        && name.includes("silver oak")
+        && AGROFORESTRY_SCHEME_KEYS.has(normalise(scheme));
+    },
+  },
+  {
+    id: "fruit",
+    match: ({ species, scheme, bagType }) => {
+      const name = normalise(species);
+      return /\b16\s*x\s*30\b/.test(normalise(bagType))
+        && !AGROFORESTRY_EXCLUDED.some((excluded) => name.includes(excluded.toLocaleLowerCase("en")))
+        && !AGROFORESTRY_OWN_ROW_KEYWORDS.some((keyword) => name.includes(keyword))
+        && AGROFORESTRY_SCHEME_KEYS.has(normalise(scheme));
+    },
+  },
+  {
+    id: "agroforestry",
+    match: ({ species, scheme, bagType }) => {
+      const name = normalise(species);
+      return /\b13\s*x\s*25\b/.test(normalise(bagType))
+        && !AGROFORESTRY_EXCLUDED.some((excluded) => name.includes(excluded.toLocaleLowerCase("en")))
+        && !AGROFORESTRY_OWN_ROW_KEYWORDS.some((keyword) => name.includes(keyword))
+        && AGROFORESTRY_SCHEME_KEYS.has(normalise(scheme));
+    },
+  },
+  {
+    id: "urbanPlanting",
+    match: ({ species, scheme, bagType }) => {
+      const name = normalise(species);
+      return /\b30\s*x\s*45\b/.test(normalise(bagType))
+        && !AGROFORESTRY_EXCLUDED.some((excluded) => name.includes(excluded.toLocaleLowerCase("en")))
+        && !AGROFORESTRY_OWN_ROW_KEYWORDS.some((keyword) => name.includes(keyword))
+        && AGROFORESTRY_SCHEME_KEYS.has(normalise(scheme));
+    },
+  },
+];
 
 export const DAAP_ROWS = [
   { id: "planting", name: "DAAP Planting", target: 34700000 },
@@ -28,11 +92,12 @@ export const DAAP_ROWS = [
 ];
 
 export const APO_ROWS = [
-  { id: "sandalwood", name: "Sandalwood", target: 510000, source: "merge", match: (species) => species.includes("sandal"), note: "Species: Sandal wood" },
+  { id: "sandalwood", name: "Sandalwood", target: 510000, bagRule: true, note: `16 x 30 cm bag, Sandalwood, year 2026-27, scheme ${AGROFORESTRY_SCHEMES.join(" or ")}` },
   { id: "palmyrah", name: "Palmyrah", target: 1048000, sameAs: "palm", note: "All palm: GTM (Forest Department and other departments) + Udhavi" },
-  { id: "silverOak", name: "Silver Oak", target: 1000000, source: "merge", match: (species) => species === "silver oak", note: "Species: Silver Oak" },
-  { id: "fruit", name: "Fruit Bearing", target: 1241000, source: "merge", match: (species) => FRUIT_KEYS.has(species), note: `Species: ${FRUIT_SPECIES.join(", ")}` },
-  { id: "agroforestry", name: "Agroforestry", target: 1795000, source: "merge", match: (species) => AGROFORESTRY_KEYS.has(species), note: `Species: ${AGROFORESTRY_SPECIES.join(", ")}` },
+  { id: "silverOak", name: "Silver Oak", target: 1000000, bagRule: true, note: `${AGROFORESTRY_BAG} cm bag, Silver Oak, scheme ${AGROFORESTRY_SCHEMES.join(" or ")}; excess beyond the target goes to Agroforestry` },
+  { id: "fruit", name: "Fruit Bearing", target: 1241000, bagRule: true, note: `16 x 30 cm bag, All except Casuarina & Mangrove, year 2026-27, scheme ${AGROFORESTRY_SCHEMES.join(" or ")}` },
+  { id: "agroforestry", name: "Agroforestry", target: 1795000, bagRule: true, note: `${AGROFORESTRY_BAG} cm bag, All except Casuarina & Mangrove, year 2026-27, scheme ${AGROFORESTRY_SCHEMES.join(" or ")}; plus Silver Oak geotagged beyond the Silver Oak target` },
+  { id: "urbanPlanting", name: "Urban Planting", target: 300000, bagRule: true, note: `30 x 45 cm bag, All except Casuarina & Mangrove, year 2026-27, scheme ${AGROFORESTRY_SCHEMES.join(" or ")}` },
 ];
 
 /** Calendar date (YYYY-MM-DD) in India, so "today" changes at midnight IST. */
@@ -61,6 +126,19 @@ export function progressValues(payload, udhaviSeeds, today, year = PROGRESS_YEAR
     return result;
   }
   const inYear = (row, columns) => row[columns.year] === year;
+  // Totals from the server-side per-rule aggregate (rows: Rule, Year, Date, Seedlings, Record Count).
+  function sumBagRule(id) {
+    const result = { total: 0, today: 0 };
+    const progressBags = datasets.merge?.progressBags;
+    if (!progressBags) return result;
+    for (const [rule, ruleYear, date, seedlings] of progressBags.rows) {
+      if (rule !== id || ruleYear !== year) continue;
+      const count = Number(seedlings) || 0;
+      result.total += count;
+      if (date === today) result.today += count;
+    }
+    return result;
+  }
   const values = {
     planting: sum("merge", inYear),
     palmGtm: sum("palm", inYear),
@@ -76,11 +154,26 @@ export function progressValues(payload, udhaviSeeds, today, year = PROGRESS_YEAR
       values[item.id] = { ...values[item.sameAs] };
       continue;
     }
+    if (item.bagRule) {
+      values[item.id] = sumBagRule(item.id);
+      continue;
+    }
     values[item.id] = sum(item.source, (row, columns) => {
       if (!inYear(row, columns)) return false;
       return item.match(String(row[columns.species] ?? "").trim().toLocaleLowerCase("en"));
     });
   }
+  const silverTarget = APO_ROWS.find((row) => row.id === "silverOak").target;
+  const silver = values.silverOak;
+  const silverAsOn = silver.total - silver.today;
+  const capped = (count) => Math.min(count, silverTarget);
+  const extra = (count) => Math.max(0, count - silverTarget);
+  values.silverOak = { total: capped(silver.total), today: capped(silver.total) - capped(silverAsOn) };
+  values.silverOakExtra = { total: extra(silver.total), today: extra(silver.total) - extra(silverAsOn) };
+  values.agroforestry = {
+    total: values.agroforestry.total + values.silverOakExtra.total,
+    today: values.agroforestry.today + values.silverOakExtra.today,
+  };
   return values;
 }
 
@@ -104,5 +197,8 @@ export function buildProgressReport(payload, udhavi, { now = new Date(), year = 
     apo: APO_ROWS.map(line),
     fruitSpecies: FRUIT_SPECIES,
     agroforestrySpecies: AGROFORESTRY_SPECIES,
+    agroforestryRule: APO_ROWS.find((row) => row.id === "agroforestry").note,
+    silverOakExtra: values.silverOakExtra.total,
+    agroforestryAvailable: Boolean(payload.datasets.find((dataset) => dataset.source === "merge")?.progressBags),
   };
 }
