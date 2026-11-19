@@ -6,26 +6,6 @@ import { createDashboardService } from "../src/dashboardService.js";
 import { aggregateCsv, aggregateCsvStream } from "../src/csvService.js";
 import { fetchLatestRelease, fetchReleaseAssetStream } from "../src/githubService.js";
 import { createVercelHandler } from "../src/vercelHandler.js";
-import { createAuth, listDepartments, mapPointsForSession, payloadForSession } from "../src/auth.js";
-
-const TEST_AUTH_ENV = {
-  AUTH_SECRET: "test-secret-that-is-at-least-32-characters-long",
-  ADMIN_USERNAME: "admin",
-  ADMIN_PASSWORD: "admin-pass-123",
-  DEPARTMENT_PASSWORD: "dept-pass-123",
-};
-const testAuth = () => createAuth({ env: TEST_AUTH_ENV });
-
-async function loginToken(baseUrl, username, password) {
-  const response = await fetch(`${baseUrl}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const payload = await response.json();
-  assert.equal(response.status, 200, payload.error);
-  return payload.token;
-}
 import { Readable } from "node:stream";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { createServer, get } from "node:http";
@@ -249,17 +229,16 @@ test("API exposes only aggregate payloads and permits only configured browser or
     }),
     forceRefresh: async () => ({ datasets: [], lastSyncedAt: null, warning: "" }),
   };
-  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"], auth: testAuth() });
+  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"] });
   const server = app.listen(0);
   t.after(() => new Promise((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   }));
   await once(server, "listening");
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const token = await loginToken(baseUrl, "admin", "admin-pass-123");
 
   const allowedResponse = await fetch(`${baseUrl}/api/dashboard-data`, {
-    headers: { Origin: "https://dashboard.example", Authorization: `Bearer ${token}` },
+    headers: { Origin: "https://dashboard.example" },
   });
   const payload = await allowedResponse.json();
   assert.equal(allowedResponse.headers.get("access-control-allow-origin"), "https://dashboard.example");
@@ -296,19 +275,18 @@ test("compresses large API responses to fit serverless response limits", async (
     }),
     forceRefresh: async () => ({ datasets: [], warning: "" }),
   };
-  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"], auth: testAuth() });
+  const app = createApp({ dashboardService, allowedOrigins: ["https://dashboard.example"] });
   const server = app.listen(0);
   t.after(() => new Promise((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   }));
   await once(server, "listening");
-  const token = await loginToken(`http://127.0.0.1:${server.address().port}`, "admin", "admin-pass-123");
   const response = await new Promise((resolve, reject) => {
     const request = get({
       hostname: "127.0.0.1",
       port: server.address().port,
       path: "/api/dashboard-data",
-      headers: { "Accept-Encoding": "gzip", Authorization: `Bearer ${token}` },
+      headers: { "Accept-Encoding": "gzip" },
     }, resolve);
     request.on("error", reject);
   });

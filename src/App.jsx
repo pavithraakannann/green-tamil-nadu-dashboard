@@ -15,8 +15,6 @@ import {
   FilterX,
   Leaf,
   LoaderCircle,
-  Lock,
-  LogOut,
   MapPin,
   MapPinned,
   Package,
@@ -44,7 +42,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { fetchMapPoints, login, refreshDashboardData, UnauthorizedError } from "./dataService.js";
+import { fetchMapPoints, refreshDashboardData } from "./dataService.js";
 import { MapLegend, MAP_CATEGORIES, mapCategory, PlantingMap } from "./PlantingMap.jsx";
 import { circleForDivision } from "./divisionCircles.js";
 import { districtKey } from "../backend/src/districtNames.js";
@@ -79,7 +77,6 @@ const COLORS = ["#248451", "#69a879", "#d99545", "#5784a5", "#9d75b6", "#d16d52"
 const ROWS_PER_PAGE = 25;
 const NUMERIC_COLUMNS = new Set(["Seedlings", "Number of Seedlings", "Record Count"]);
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const SESSION_STORAGE_KEY = "green-tamil-nadu-session-v1";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
 const compactFormat = new Intl.NumberFormat("en-IN", {
@@ -279,96 +276,6 @@ function groupData(datasetRows, field, metric) {
 
   return [...groups.values()]
     .sort((a, b) => b[metric] - a[metric] || a.name.localeCompare(b.name));
-}
-
-function tokenExpiry(token) {
-  try {
-    const body = token.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
-    const payload = JSON.parse(atob(body.padEnd(Math.ceil(body.length / 4) * 4, "=")));
-    return typeof payload.exp === "number" ? payload.exp : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function loadSession() {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "null");
-    if (
-      saved
-      && typeof saved.token === "string"
-      && (saved.role === "admin" || (saved.role === "department" && typeof saved.department === "string"))
-      && tokenExpiry(saved.token) > Date.now()
-    ) return saved;
-  } catch {
-    // Ignore unreadable storage and show the login page.
-  }
-  return null;
-}
-
-function saveSession(session) {
-  try {
-    if (session) window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    else window.localStorage.removeItem(SESSION_STORAGE_KEY);
-  } catch {
-    // The session still works for this page view without storage.
-  }
-}
-
-function LoginPage({ onLogin, notice }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [loginError, setLoginError] = useState("");
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setSubmitting(true);
-    setLoginError("");
-    try {
-      onLogin(await login(username.trim(), password));
-    } catch (submitError) {
-      setLoginError(submitError.message || "Login failed.");
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <main className="loading-screen">
-      <div className="loading-mark"><Leaf size={27} /></div>
-      <form className="loading-card login-card" onSubmit={handleSubmit}>
-        <h1>Green Tamil Nadu Mission</h1>
-        <p>Sign in to view the planting dashboard.</p>
-        {notice && <div className="login-notice" role="status">{notice}</div>}
-        <label className="login-field">
-          <span>Login ID</span>
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            placeholder="admin or DEPARTMENT NAME"
-            required
-          />
-        </label>
-        <label className="login-field">
-          <span>Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
-        {loginError && <div className="login-error" role="alert">{loginError}</div>}
-        <button className="button button-primary login-submit" type="submit" disabled={submitting}>
-          {submitting ? <LoaderCircle className="spin" size={16} /> : <Lock size={16} />}
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-        <small>Government departments: your login ID is your department name in CAPITAL letters.</small>
-      </form>
-    </main>
-  );
 }
 
 function LoadingScreen({ progress, error, onRetry }) {
@@ -846,7 +753,7 @@ function rowCategory(dataset, row) {
   });
 }
 
-function MapPage({ rows, mapState, onRetry, isAdmin }) {
+function MapPage({ rows, mapState, onRetry }) {
   const [year, setYear] = useState(() => currentReportingYear());
   const [district, setDistrict] = useState("all");
   const [category, setCategory] = useState("all");
@@ -871,7 +778,7 @@ function MapPage({ rows, mapState, onRetry, isAdmin }) {
       : total
   ), 0), [rows, year, district, category]);
   const coverage = totalRecords ? Math.min(100, (mappedRecords / totalRecords) * 100) : 0;
-  const categories = isAdmin ? MAP_CATEGORIES : MAP_CATEGORIES.filter((item) => item.id !== "palm");
+  const categories = MAP_CATEGORIES;
   const topDistricts = useMemo(() => {
     const groups = new Map();
     for (const point of filteredPoints) groups.set(point.districtKey, (groups.get(point.districtKey) ?? 0) + point.seedlings);
@@ -2071,8 +1978,8 @@ function TargetsPage({ targets }) {
   );
 }
 
-function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, lockedDepartment = "", mapState, onRetryMap, targets }) {
-  const department = lockedDepartment ? "all" : selectedDepartment;
+function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepartment, year, setYear, district, setDistrict, mapState, onRetryMap, targets }) {
+  const department = selectedDepartment;
   const allGovRows = useMemo(
     () => rows.filter(({ dataset, row }) => govDepartmentAt(dataset, row)),
     [rows],
@@ -2114,8 +2021,8 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
   );
   const bySpecies = useMemo(() => groupData(selectedRows, "Species", "seedlings"), [selectedRows]);
   const byMonth = useMemo(() => monthlyTrend(selectedRows), [selectedRows]);
-  const isAll = department === "all" && !lockedDepartment;
-  const departmentTitle = lockedDepartment || department;
+  const isAll = department === "all";
+  const departmentTitle = department;
   const departmentPoints = useMemo(() => (mapState?.points ?? []).filter((point) => (
     point.category === "gov"
     && (year === "all" || point.year === year)
@@ -2126,11 +2033,10 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
   // Target groups for this view: the department's own group, or every government group for "all".
   const targetGroupIds = useMemo(() => {
     if (!targets) return [];
-    if (lockedDepartment) return targets.groups.map((group) => group.id);
     if (department === "all") return targets.groups.map((group) => group.id).filter((id) => id !== "forest" && id !== "others");
     const id = targets.govGroups?.[department.trim().replace(/\s+/g, " ").toLocaleUpperCase("en")];
     return id ? [id] : [];
-  }, [targets, lockedDepartment, department]);
+  }, [targets, department]);
   const showTargets = Boolean(targets) && targetGroupIds.length > 0 && (year === targets.year || year === "all");
   const targetGroup = targets?.groups.find((group) => group.id === targetGroupIds[0]);
 
@@ -2158,7 +2064,6 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
         action={<button className="button button-primary" onClick={downloadAbstract}><Download size={16} /> Export abstract CSV</button>}
       />
       <div className="report-controls gov-department-filter">
-        {!lockedDepartment && (
         <label className="report-selector" htmlFor="gov-department-select">
           <span>Government department</span>
           <span className="select-wrap report-select gov-department-select">
@@ -2169,7 +2074,6 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
             <ChevronDown size={14} />
           </span>
         </label>
-        )}
         <label className="report-selector" htmlFor="gov-year-select">
           <span>Year</span>
           <span className="select-wrap report-select">
@@ -2194,7 +2098,7 @@ function GovDepartmentDashboard({ rows, department: selectedDepartment, setDepar
             <ChevronDown size={14} />
           </span>
         </label>
-        {!isAll && !lockedDepartment && (
+        {!isAll && (
           <button className="button button-outline" onClick={() => setDepartment("all")}>
             <ArrowLeft size={15} /> All departments
           </button>
@@ -3483,32 +3387,13 @@ function Reports({ rows, options, filters, setFilters, onClear }) {
 }
 
 export default function App() {
-  const [session, setSession] = useState(loadSession);
-  const [notice, setNotice] = useState("");
-
-  function handleLogin(nextSession) {
-    saveSession(nextSession);
-    setNotice("");
-    setSession(nextSession);
-  }
-
-  function handleLogout(message = "") {
-    saveSession(null);
-    setNotice(message);
-    setSession(null);
-  }
-
-  if (!session) return <LoginPage onLogin={handleLogin} notice={notice} />;
-  return <Dashboard key={session.token} session={session} onLogout={handleLogout} />;
+  return <Dashboard />;
 }
 
-const DEPARTMENT_NAV_ITEMS = [{ id: "gov-departments", label: "Department dashboard", icon: Building2 }];
-
-function Dashboard({ session, onLogout }) {
-  const isAdmin = session.role === "admin";
-  const navItems = isAdmin ? NAV_ITEMS : DEPARTMENT_NAV_ITEMS;
+function Dashboard() {
+  const navItems = NAV_ITEMS;
   const [datasets, setDatasets] = useState([]);
-  const [activePage, setActivePage] = useState(isAdmin ? "overview" : "gov-departments");
+  const [activePage, setActivePage] = useState("overview");
   const [selectedDivision, setSelectedDivision] = useState("");
   const [selectedGovDepartment, setSelectedGovDepartment] = useState("all");
   const [govYear, setGovYear] = useState(() => currentReportingYear());
@@ -3541,7 +3426,7 @@ function Dashboard({ session, onLogout }) {
     try {
       const loaded = await refreshDashboardData(({ source, rows }) => {
         setProgress((current) => ({ ...current, [source]: rows }));
-      }, { forceRefresh, token: session.token });
+      }, { forceRefresh });
       setDatasets(loaded.datasets);
       hasDataRef.current = true;
       setLastSyncedAt(loaded.lastSyncedAt ?? "");
@@ -3557,10 +3442,6 @@ function Dashboard({ session, onLogout }) {
           : current
       ));
     } catch (loadError) {
-      if (loadError instanceof UnauthorizedError) {
-        onLogout(loadError.message);
-        return;
-      }
       const message = loadError.message || "An unexpected error occurred while loading dashboard data.";
       if (hasData) setSyncWarning(message);
       else setError(message);
@@ -3587,17 +3468,13 @@ function Dashboard({ session, onLogout }) {
   async function loadMapPoints() {
     setMapState({ status: "loading", points: [], available: true, error: "" });
     try {
-      const { points, available } = await fetchMapPoints(session.token);
+      const { points, available } = await fetchMapPoints();
       for (const point of points) {
         point.category = mapCategory(point);
         point.districtKey = point.district.trim().replace(/\s+/g, " ").toLocaleUpperCase("en");
       }
       setMapState({ status: "ready", points, available, error: "" });
     } catch (mapError) {
-      if (mapError instanceof UnauthorizedError) {
-        onLogout(mapError.message);
-        return;
-      }
       setMapState({ status: "error", points: [], available: true, error: mapError.message || "Map data could not be loaded." });
     }
   }
@@ -3695,7 +3572,7 @@ function Dashboard({ session, onLogout }) {
       <aside className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-emblem"><Leaf size={23} /></div>
-          <div><strong>Green Tamil Nadu</strong><span>{isAdmin ? "FOREST DEPARTMENT" : "DEPARTMENT LOGIN"}</span></div>
+          <div><strong>Green Tamil Nadu</strong><span>FOREST DEPARTMENT</span></div>
           <button className="mobile-close" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}><X size={20} /></button>
         </div>
         <div className="nav-caption">WORKSPACE</div>
@@ -3729,16 +3606,12 @@ function Dashboard({ session, onLogout }) {
               </div>
             )}
             <button className="button button-outline refresh-button" disabled={refreshing} onClick={() => loadData(true)}><RefreshCw className={refreshing ? "spin" : ""} size={15} /> {refreshing ? "Refreshing…" : "Refresh data"}</button>
-            <span className="session-badge" title={isAdmin ? "Administrator" : session.department}>
-              {isAdmin ? "Admin" : session.department}
-            </span>
-            <button className="button button-outline" onClick={() => onLogout()}><LogOut size={15} /> Log out</button>
           </div>
         </header>
 
         <div className="page-content">
           {syncWarning && <div className="sync-notice" role="status">{syncWarning}</div>}
-          {isAdmin && activePage === "overview" && (
+          {activePage === "overview" && (
             <Overview
               summary={summary}
               chartRows={chartRows}
@@ -3755,7 +3628,7 @@ function Dashboard({ session, onLogout }) {
               onViewPalmDetails={viewPalmDetails}
             />
           )}
-          {isAdmin && activePage === "forest-department-details" && (
+          {activePage === "forest-department-details" && (
             <LocationSeedlingDetails
               title="Forest Department"
               rows={chartRows.filter(({ dataset, row }) => (
@@ -3766,7 +3639,7 @@ function Dashboard({ session, onLogout }) {
               onBack={() => setActivePage("overview")}
             />
           )}
-          {isAdmin && activePage === "palm-details" && (
+          {activePage === "palm-details" && (
             <LocationSeedlingDetails
               title="Palm seedlings"
               rows={chartRows.filter(({ dataset }) => dataset.source === "palm")}
@@ -3774,7 +3647,7 @@ function Dashboard({ session, onLogout }) {
               onBack={() => setActivePage("overview")}
             />
           )}
-          {isAdmin && activePage === "division-details" && selectedDivision && (
+          {activePage === "division-details" && selectedDivision && (
             <DivisionDetails
               division={selectedDivision}
               rows={chartRows.filter(({ dataset, row }) => (
@@ -3783,7 +3656,7 @@ function Dashboard({ session, onLogout }) {
               onBack={() => setActivePage("overview")}
             />
           )}
-          {isAdmin && activePage === "other-department-details" && (
+          {activePage === "other-department-details" && (
             <OtherDepartmentDetails
               rows={chartRows.filter(({ dataset, row }) => (
                 dataset.source !== "palm"
@@ -3811,21 +3684,20 @@ function Dashboard({ session, onLogout }) {
               }}
               district={govDistrict}
               setDistrict={setGovDistrict}
-              lockedDepartment={isAdmin ? "" : session.department}
               mapState={mapState}
               onRetryMap={loadMapPoints}
               targets={targets}
             />
           )}
-          {isAdmin && activePage === "targets" && <TargetsPage targets={targets} />}
-          {isAdmin && activePage === "progress" && <ProgressPage progress={progressReport} />}
-          {isAdmin && activePage === "bag-species" && <BagSpeciesPage datasets={datasets} />}
-          {isAdmin && activePage === "palm" && palm && (
+          {activePage === "targets" && <TargetsPage targets={targets} />}
+          {activePage === "progress" && <ProgressPage progress={progressReport} />}
+          {activePage === "bag-species" && <BagSpeciesPage datasets={datasets} />}
+          {activePage === "palm" && palm && (
             <DatasetPage dataset={palm} rows={palm.filteredRows} title="Palm data" description="Browse privacy-safe aggregated groups from palm.csv with district, circle, division, scheme and year filters." summary={palm.summary} options={options} filters={filters} setFilters={setFilters} onClear={clearFilters} hideTable hideFilters={PALM_HIDDEN_FILTERS}>
               <PalmTargetSection palmTargets={palmTargets} dataset={palm} filters={filters} districtCircles={districtCircles} showStats />
             </DatasetPage>
           )}
-          {isAdmin && activePage === "reports" && (
+          {activePage === "reports" && (
             <Reports
               rows={chartRows}
               options={options}
